@@ -99,8 +99,9 @@ app.use(cors());
 app.use(express.json({ limit: "256kb" }));
 const bridgeClient = createBridgeClient(BRIDGE_URL, log);
 
-app.get("/api/info", (_req: Request, res: Response) => {
+app.get("/api/info", async (_req: Request, res: Response) => {
   const urls = receiverUrls();
+  const bridgeHealth = bridgeClient ? await bridgeClient.health() : null;
   res.json({
     ok: true,
     name: RECEIVER_NAME,
@@ -117,6 +118,7 @@ app.get("/api/info", (_req: Request, res: Response) => {
     autoAcceptAll: AUTO_ACCEPT_ALL,
     staleCameraTtlMs: STALE_CAMERA_TTL_MS,
     bridgeUrl: BRIDGE_URL,
+    bridgeHealth,
     tls: USE_TLS,
     ts: new Date().toISOString(),
   });
@@ -179,10 +181,11 @@ app.post("/api/cameras/:id/accept", async (req: Request, res: Response) => {
 
 app.delete("/api/cameras/:id", async (req: Request, res: Response) => {
   const id = req.params.id;
+  const cam = state.cameras.get(id);
   signaling.closeCameraSocket(id, 1000, "removed");
   const removed = removeCamera(state, id);
-  if (bridgeClient) {
-    await bridgeClient.removeCamera(id);
+  if (bridgeClient && cam) {
+    await bridgeClient.removeCamera(cam, true);
   }
   signaling.broadcastCameraList();
   if (removed) {
@@ -331,7 +334,7 @@ async function clearStaleCameras(manual = false) {
   for (const cam of stale) {
     signaling.closeCameraSocket(cam.sessionId, 1000, "stale-cleanup");
     removeCamera(state, cam.sessionId);
-    if (bridgeClient) await bridgeClient.removeCamera(cam.sessionId);
+    if (bridgeClient) await bridgeClient.removeCamera(cam, false);
     publishEvent({
       type: "stale-cleaned",
       sessionId: cam.sessionId,

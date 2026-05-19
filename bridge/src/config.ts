@@ -18,6 +18,7 @@ export interface BridgeConfig {
   mediaMtxWebRtcPort: number;
   mediaMtxWebRtcUdpPort: number;
   mediaMtxAdditionalHosts: string[];
+  rtspPathGraceMs: number;
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -76,6 +77,7 @@ export function loadConfig(): BridgeConfig {
       .split(",")
       .map((host) => host.trim())
       .filter(Boolean),
+    rtspPathGraceMs: envNumber("RTSP_PATH_GRACE_MS", 10 * 60_000),
   };
 }
 

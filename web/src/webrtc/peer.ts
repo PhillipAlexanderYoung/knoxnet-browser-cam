@@ -233,4 +233,14 @@ export class CameraPeer {
       // ignore
     }
   }
+
+  close(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    try {
+      this.pc.close();
+    } catch {
+      // ignore
+    }
+  }
 }

@@ -7,8 +7,15 @@ import {
   Video,
   Square,
 } from "lucide-react";
-import type { CameraStreamApi } from "../../webrtc/useCameraStream";
-import type { ResolutionKey } from "../../webrtc/constraints";
+import {
+  CAMERA_PERMISSION_REQUIRED_MESSAGE,
+  isCameraPermissionDeniedError,
+  type CameraStreamApi,
+} from "../../webrtc/useCameraStream";
+import {
+  resolutionModeLabel,
+  type ResolutionMode,
+} from "../../webrtc/constraints";
 import type { CameraSettings } from "../../storage/storage";
 import { Header } from "../Header";
 import "./CameraPage.css";
@@ -115,15 +122,23 @@ export function CameraPage({
 }: CameraPageProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [cameraPermissionBlocked, setCameraPermissionBlocked] = useState(false);
+  const [retryingCamera, setRetryingCamera] = useState(false);
   const [previewActive, setPreviewActive] = useState(false);
   const previewedFor = useRef<string>("");
   const autoStartAttempted = useRef(false);
-  const manualStopRef = useRef(false);
-  const hadActiveStreamRef = useRef(false);
-  const reconnectTimerRef = useRef<number | null>(null);
-  const reconnectAttemptRef = useRef(0);
-  const [reconnectDelayMs, setReconnectDelayMs] = useState<number | null>(null);
   const cameraAccessError = api.cameraAccessError;
+  const previewKey = useMemo(
+    () =>
+      `${settings.preferredFacingMode}|${settings.preferredDeviceId ?? ""}|${settings.resolution}|${settings.frameRate}|${settings.audioEnabled}`,
+    [
+      settings.preferredFacingMode,
+      settings.preferredDeviceId,
+      settings.resolution,
+      settings.frameRate,
+      settings.audioEnabled,
+    ],
+  );
 
   useEffect(() => {
     if (videoRef.current && api.stream) {
@@ -134,9 +149,9 @@ export function CameraPage({
   // Acquire a local preview as soon as the page mounts, so the user can see
   // their camera even before pressing record.
   useEffect(() => {
-    const key = `${settings.preferredFacingMode}|${settings.preferredDeviceId ?? ""}|${settings.resolution}|${settings.frameRate}|${settings.audioEnabled}`;
-    if (previewedFor.current === key) return;
+    if (previewedFor.current === previewKey) return;
     if (api.state === "streaming" || api.state === "connecting") return;
+    if (cameraPermissionBlocked) return;
     if (cameraAccessError) {
       setPreviewActive(false);
       return;
@@ -145,6 +160,7 @@ export function CameraPage({
     (async () => {
       try {
         setPermissionError(null);
+        setCameraPermissionBlocked(false);
         await api.acquirePreview({
           facingMode: settings.preferredFacingMode,
           deviceId: settings.preferredDeviceId,
@@ -153,14 +169,17 @@ export function CameraPage({
           audioEnabled: settings.audioEnabled,
         });
         if (!cancelled) {
-          previewedFor.current = key;
+          previewedFor.current = previewKey;
           setPreviewActive(true);
         }
       } catch (err) {
         if (!cancelled) {
+          const blocked = isCameraPermissionDeniedError(err);
+          setCameraPermissionBlocked(blocked);
           setPermissionError(
-            (err as Error)?.message ??
-              "Camera permission denied. Allow camera access and reload.",
+            blocked
+              ? CAMERA_PERMISSION_REQUIRED_MESSAGE
+              : (err as Error)?.message ?? "Could not access camera",
           );
           setPreviewActive(false);
         }
@@ -173,6 +192,8 @@ export function CameraPage({
   }, [
     api,
     cameraAccessError,
+    cameraPermissionBlocked,
+    previewKey,
     settings.preferredFacingMode,
     settings.preferredDeviceId,
     settings.resolution,
@@ -191,13 +212,8 @@ export function CameraPage({
       setPermissionError(cameraAccessError);
       return;
     }
-    manualStopRef.current = false;
-    if (reconnectTimerRef.current != null) {
-      window.clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
-    setReconnectDelayMs(null);
     setPermissionError(null);
+    setCameraPermissionBlocked(false);
     try {
       await api.start({
         receiverUrl: settings.receiverUrl,
@@ -212,63 +228,58 @@ export function CameraPage({
         maxBitrateKbps: settings.bitrateKbps,
       });
     } catch (err) {
-      setPermissionError((err as Error)?.message ?? "Failed to start stream");
+      const blocked = isCameraPermissionDeniedError(err);
+      setCameraPermissionBlocked(blocked);
+      setPermissionError(
+        blocked
+          ? CAMERA_PERMISSION_REQUIRED_MESSAGE
+          : (err as Error)?.message ?? "Failed to start stream",
+      );
     }
   }, [api, cameraAccessError, clientDeviceId, settings]);
 
-  const handleRecordToggle = useCallback(async () => {
-    if (api.state === "connecting" || api.state === "searching") return;
-    if (api.state === "streaming" || api.state === "paired") {
-      manualStopRef.current = true;
-      reconnectAttemptRef.current = 0;
-      setReconnectDelayMs(null);
-      if (reconnectTimerRef.current != null) {
-        window.clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
+  const retryCameraAccess = useCallback(async () => {
+    if (retryingCamera) return;
+    setRetryingCamera(true);
+    setPermissionError(null);
+    setCameraPermissionBlocked(false);
+    setPreviewActive(false);
+    previewedFor.current = "";
+    try {
+      if (autoStart && settings.receiverUrl && settings.pairingCode) {
+        await startStreaming();
+        return;
       }
+      await api.acquirePreview({
+        facingMode: settings.preferredFacingMode,
+        deviceId: settings.preferredDeviceId,
+        resolution: settings.resolution,
+        frameRate: settings.frameRate,
+        audioEnabled: settings.audioEnabled,
+      });
+      previewedFor.current = previewKey;
+      setPreviewActive(true);
+    } catch (err) {
+      const blocked = isCameraPermissionDeniedError(err);
+      setCameraPermissionBlocked(blocked);
+      setPermissionError(
+        blocked
+          ? CAMERA_PERMISSION_REQUIRED_MESSAGE
+          : (err as Error)?.message ?? "Could not access camera",
+      );
+      setPreviewActive(false);
+    } finally {
+      setRetryingCamera(false);
+    }
+  }, [api, autoStart, previewKey, retryingCamera, settings, startStreaming]);
+
+  const handleRecordToggle = useCallback(async () => {
+    if (api.shouldStream) {
       await api.stop();
       return;
     }
     await startStreaming();
   }, [api, startStreaming]);
-
-  useEffect(() => {
-    if (api.state === "streaming") {
-      hadActiveStreamRef.current = true;
-      reconnectAttemptRef.current = 0;
-      setReconnectDelayMs(null);
-      return;
-    }
-    if (api.state !== "disconnected" && api.state !== "error") return;
-    if (!hadActiveStreamRef.current || manualStopRef.current) return;
-    if (!settings.receiverUrl || !settings.pairingCode) return;
-    if (reconnectTimerRef.current != null) return;
-    const attempt = reconnectAttemptRef.current + 1;
-    if (attempt > 5) {
-      setReconnectDelayMs(null);
-      return;
-    }
-    const delay = Math.min(1000 * 2 ** (attempt - 1), 8000);
-    reconnectAttemptRef.current = attempt;
-    setReconnectDelayMs(delay);
-    reconnectTimerRef.current = window.setTimeout(() => {
-      reconnectTimerRef.current = null;
-      void startStreaming();
-    }, delay);
-  }, [
-    api.state,
-    settings.receiverUrl,
-    settings.pairingCode,
-    startStreaming,
-  ]);
-
-  useEffect(() => {
-    return () => {
-      if (reconnectTimerRef.current != null) {
-        window.clearTimeout(reconnectTimerRef.current);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     if (!autoStart || autoStartAttempted.current) return;
@@ -290,18 +301,43 @@ export function CameraPage({
     api.state === "searching" ||
     api.state === "negotiating" ||
     api.state === "paired";
-  const isConnecting =
-    api.state === "connecting" ||
-    api.state === "searching" ||
-    api.state === "negotiating";
+  const reconnectDelayMs = api.reconnect.delayMs;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!api.reconnect.active || api.reconnect.nextAt == null) return;
+    setNowMs(Date.now());
+    const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [api.reconnect.active, api.reconnect.nextAt]);
   const trustReceiverUrl = useMemo(
     () => receiverTrustUrl(settings.receiverUrl),
     [settings.receiverUrl],
   );
-  const showSignalingHelp =
-    Boolean(api.error) && Boolean(settings.receiverUrl) && !cameraAccessError;
+  const reconnectSeconds = api.reconnect.nextAt
+    ? Math.max(0, Math.ceil((api.reconnect.nextAt - nowMs) / 1000))
+    : reconnectDelayMs
+      ? Math.ceil(reconnectDelayMs / 1000)
+      : null;
+  const showReconnectStatus =
+    api.shouldStream &&
+    (api.state === "disconnected" || api.state === "error") &&
+    api.errorKind !== "camera" &&
+    api.errorKind !== "certificate";
+  const showCertificateHelp =
+    api.shouldStream &&
+    api.errorKind === "certificate" &&
+    Boolean(trustReceiverUrl) &&
+    !cameraAccessError;
+  const showPairingError =
+    api.errorKind === "pairing" && Boolean(api.error) && !cameraAccessError;
+  const showGenericError =
+    Boolean(api.error) &&
+    api.errorKind !== "camera" &&
+    api.errorKind !== "connection" &&
+    api.errorKind !== "certificate" &&
+    api.errorKind !== "pairing";
 
-  const settingsResolution: ResolutionKey = settings.resolution;
+  const settingsResolution: ResolutionMode = settings.resolution;
   const liveResolutionLabel = useMemo(() => {
     const w = api.trackSettings?.width;
     const h = api.trackSettings?.height;
@@ -311,8 +347,11 @@ export function CameraPage({
       if (h >= 480) return "480p";
       return `${h}p`;
     }
+    if (settingsResolution === "auto") {
+      return resolutionModeLabel("auto", api.quality.currentResolution);
+    }
     return settingsResolution;
-  }, [api.trackSettings, settingsResolution]);
+  }, [api.trackSettings, api.quality.currentResolution, settingsResolution]);
 
   const liveFpsLabel = useMemo(() => {
     const fps = api.trackSettings?.frameRate;
@@ -355,119 +394,138 @@ export function CameraPage({
       <Header live={isStreaming} />
 
       {cameraAccessError && (
-        <section className="camera-callout" role="alert" aria-live="polite">
-          <div className="camera-callout__title">
-            <AlertTriangle size={18} />
-            Camera access needs HTTPS or localhost
-          </div>
-          <p>
-            Browser camera access requires a secure context. Opening this app
-            from <code>http://&lt;LAN-IP&gt;:5173</code> will not prompt for
-            camera permission on most mobile browsers.
-          </p>
-          <ul>
-            <li>
-              Run <code>npm run dev:https</code> and open{" "}
-              <code>https://&lt;LAN-IP&gt;:5173</code> on the phone.
-            </li>
-            <li>
-              For Chrome Android testing, add the HTTP LAN origin in{" "}
-              <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>{" "}
-              and relaunch Chrome.
-            </li>
-            <li>
-              Or put a local TLS reverse proxy such as Caddy, nginx, or mkcert
-              in front of the Vite dev server.
-            </li>
-          </ul>
-        </section>
-      )}
-
-      {autoStart &&
-        settings.receiverUrl &&
-        settings.pairingCode &&
-        !isStreaming &&
-        !isBusy && (
-          <section className="camera-callout camera-callout--start" aria-live="polite">
-            <div className="camera-callout__title">
-              <Video size={18} />
-              Ready from pairing QR
-            </div>
-            <p>
-              Receiver and pairing code are filled in. If iOS needs a user tap,
-              use this button to allow camera access and start streaming.
-            </p>
-            <button
-              type="button"
-              className="camera-callout__button"
-              onClick={() => void startStreaming()}
-              disabled={Boolean(cameraAccessError) || isConnecting}
-            >
-              {isConnecting ? "Connecting…" : "Allow camera and start streaming"}
-            </button>
-          </section>
-        )}
-
-      {(api.state === "disconnected" || api.state === "error") &&
-        hadActiveStreamRef.current &&
-        !manualStopRef.current && (
-          <section className="camera-callout camera-callout--compact" aria-live="polite">
-            <div className="camera-callout__title">
-              <Video size={16} />
-              Receiver connection dropped
-            </div>
-            <div className="camera-callout__body">
-              <p>
-                {reconnectDelayMs
-                  ? `Reconnecting in ${Math.ceil(reconnectDelayMs / 1000)}s.`
-                  : "Reconnect when the receiver is back."}
-              </p>
-            </div>
-            <button
-              type="button"
-              className="camera-callout__button camera-callout__button--secondary"
-              onClick={() => void startStreaming()}
-              disabled={Boolean(cameraAccessError) || isConnecting}
-            >
-              Reconnect now
-            </button>
-          </section>
-        )}
-
-      {showSignalingHelp && (
         <section
-          className="camera-callout camera-callout--compact"
+          className="camera-callout camera-callout--compact camera-callout--error"
           role="alert"
           aria-live="polite"
         >
           <div className="camera-callout__title">
             <AlertTriangle size={16} />
-            Receiver signaling failed
+            Camera access needs HTTPS or localhost
           </div>
           <div className="camera-callout__body">
             <p>
-              Tried <code>{settings.receiverUrl}</code>.
-              {trustReceiverUrl
-                ? " Trust the receiver certificate, then return and start again."
-                : ""}
+              Camera access requires HTTPS or localhost. Open the phone app from
+              the secure dev URL, for example{" "}
+              <code>https://&lt;LAN-IP&gt;:5173</code>.
             </p>
-            {trustReceiverUrl && (
-              <p>
-                Opens <code>{trustReceiverUrl}</code>.
-              </p>
+          </div>
+        </section>
+      )}
+
+      {cameraPermissionBlocked && !cameraAccessError && (
+        <section
+          className="camera-callout camera-callout--compact camera-callout--error"
+          role="alert"
+          aria-live="polite"
+        >
+          <div className="camera-callout__title">
+            <AlertTriangle size={16} />
+            Camera permission required
+          </div>
+          <div className="camera-callout__body">
+            <p>{CAMERA_PERMISSION_REQUIRED_MESSAGE}</p>
+          </div>
+          <button
+            type="button"
+            className="camera-callout__button camera-callout__button--secondary"
+            onClick={() => void retryCameraAccess()}
+            disabled={retryingCamera}
+          >
+            {retryingCamera ? "Retrying..." : "Retry camera access"}
+          </button>
+        </section>
+      )}
+
+      {showReconnectStatus && (
+        <section className="camera-callout camera-callout--compact" aria-live="polite">
+          <div className="camera-callout__title">
+            <Video size={16} />
+            Receiver disconnected
+          </div>
+          <div className="camera-callout__body">
+            <p>
+              {reconnectSeconds != null && reconnectSeconds > 0
+                ? `Receiver disconnected. Reconnecting in ${reconnectSeconds}s...`
+                : "Receiver disconnected. Reconnecting now..."}
+            </p>
+            {api.reconnect.attempt >= 5 && (
+              <p>Repeated failures: consider lowering FPS, bitrate, or resolution.</p>
             )}
           </div>
-          {trustReceiverUrl && (
+          <div className="camera-callout__actions">
+            <button
+              type="button"
+              className="camera-callout__button camera-callout__button--secondary"
+              onClick={() => void startStreaming()}
+              disabled={Boolean(cameraAccessError)}
+            >
+              Reconnect now
+            </button>
+            <button
+              type="button"
+              className="camera-callout__button camera-callout__button--secondary"
+              onClick={() => void api.stop()}
+            >
+              Stop
+            </button>
+          </div>
+        </section>
+      )}
+
+      {showCertificateHelp && (
+        <section
+          className="camera-callout camera-callout--compact camera-callout--hint"
+          role="alert"
+          aria-live="polite"
+        >
+          <div className="camera-callout__title">
+            <AlertTriangle size={16} />
+            Secure receiver connection blocked?
+          </div>
+          <div className="camera-callout__body">
+            <p>
+              If this is the first time connecting, open the receiver dashboard once to trust its certificate.
+            </p>
+            <p>
+              Tried <code>{settings.receiverUrl}</code>.
+            </p>
+          </div>
+          <div className="camera-callout__actions">
             <button
               type="button"
               className="camera-callout__button camera-callout__button--secondary"
               onClick={() => {
-                window.location.href = trustReceiverUrl;
+                if (trustReceiverUrl) window.location.href = trustReceiverUrl;
               }}
             >
-              Trust receiver certificate
+              Open dashboard
             </button>
-          )}
+            <button
+              type="button"
+              className="camera-callout__button camera-callout__button--secondary"
+              onClick={() => void api.stop()}
+            >
+              Stop
+            </button>
+          </div>
+        </section>
+      )}
+
+      {showPairingError && (
+        <section
+          className="camera-callout camera-callout--compact camera-callout--error"
+          role="alert"
+          aria-live="polite"
+        >
+          <div className="camera-callout__title">
+            <AlertTriangle size={16} />
+            Pairing rejected
+          </div>
+          <div className="camera-callout__body">
+            <p>{api.error}</p>
+            <p>Check the receiver pairing code, then start again.</p>
+          </div>
         </section>
       )}
 
@@ -514,9 +572,15 @@ export function CameraPage({
         </span>
       </div>
 
-      {api.error && (
+      {showGenericError && (
         <div className="errorbar">
           <AlertTriangle size={14} /> {api.error}
+        </div>
+      )}
+
+      {api.quality.message && (
+        <div className="errorbar">
+          <Video size={14} /> {api.quality.message}
         </div>
       )}
 
@@ -541,14 +605,11 @@ export function CameraPage({
           type="button"
           className={`record ${isStreaming ? "record--on" : ""} ${isBusy ? "record--busy" : ""}`}
           onClick={handleRecordToggle}
-          aria-pressed={isStreaming}
-          disabled={Boolean(cameraAccessError) || isConnecting}
+          aria-pressed={api.shouldStream}
+          disabled={Boolean(cameraAccessError)}
           title={
             cameraAccessError ??
-            (isConnecting
-              ? "Connecting to receiver"
-              : null) ??
-            (isStreaming ? "Stop streaming" : "Start streaming")
+            (api.shouldStream ? "Stop streaming" : "Start streaming")
           }
         >
           <span className="record__ring" aria-hidden="true" />
@@ -562,6 +623,8 @@ export function CameraPage({
           <span className="record__label">
             {isStreaming
               ? "Tap to Stop"
+              : api.shouldStream
+                ? "Tap to Stop"
               : api.state === "negotiating"
                 ? "Negotiating…"
               : isBusy

@@ -64,6 +64,18 @@ function previewType(cam) {
   return cam.preview?.type === "hls" ? "HLS" : "WebRTC";
 }
 
+function qualityLabel(quality) {
+  if (!quality) return "-";
+  const current = quality.currentResolution || (quality.height ? `${quality.height}p` : "");
+  const mode = quality.mode === "auto"
+    ? `Auto${current ? ` (${current})` : ""}`
+    : (quality.currentResolution || quality.requestedResolution || quality.mode);
+  const details = [];
+  if (quality.frameRate) details.push(`${Math.round(quality.frameRate)}fps`);
+  if (quality.bitrateKbps) details.push(`${Math.round(quality.bitrateKbps)} kbps`);
+  return [mode, ...details].filter(Boolean).join(" / ");
+}
+
 function formatWhen(value) {
   if (!value) return "Never";
   const date = new Date(value);
@@ -103,7 +115,12 @@ function renderThumb(cam) {
 
 function statusPill(cam) {
   const status = cameraStatus(cam);
-  const label = status === "allocated" ? "allocated-no-media" : status;
+  const label =
+    status === "allocated"
+      ? "allocated-no-media"
+      : status === "offline" || status === "recovering"
+        ? `${status}-stable-url`
+        : status;
   return `<span class="pill pill--${escapeAttr(status)}">${escapeHtml(label)}</span>`;
 }
 
@@ -113,7 +130,7 @@ function actionButtons(cam) {
   return `
     <div class="actions">
       <button class="btn btn--primary" type="button" data-action="detail" data-id="${id}">Open</button>
-      <button class="btn btn--ghost" type="button" data-action="copy-rtsp" data-id="${id}">${cameraStatus(cam) === "publishing" ? "Copy RTSP" : "Copy RTSP (not live)"}</button>
+      <button class="btn btn--ghost" type="button" data-action="copy-rtsp" data-id="${id}">${cameraStatus(cam) === "publishing" ? "Copy Stable RTSP URL" : "Copy Stable RTSP URL (not live)"}</button>
       ${url ? `<button class="btn btn--ghost" type="button" data-action="open-preview" data-id="${id}">Preview URL</button>` : ""}
       <button class="btn btn--danger" type="button" data-action="delete" data-id="${id}">Remove</button>
     </div>
@@ -142,9 +159,14 @@ function renderTable(cameras) {
           <td>
             <div class="mono">session ${escapeHtml(id)}</div>
             <div class="mono">path ${escapeHtml(cam.path || "-")}</div>
+            <div class="mono">quality ${escapeHtml(qualityLabel(cam.quality))}</div>
           </td>
           <td>${statusPill(cam)}</td>
-          <td><code class="mono rtsp-url">${escapeHtml(cam.rtspUrl || "-")}</code></td>
+          <td>
+            <div class="mono">Stable RTSP URL / NVR URL</div>
+            <code class="mono rtsp-url">${escapeHtml(cam.rtspUrl || "-")}</code>
+            <div class="mono">Use this in VLC/VMS/NVR; it is retained while the phone reconnects.</div>
+          </td>
           <td class="mono">${escapeHtml(formatWhen(cam.lastSeen || cam.updatedAt))}</td>
           <td>
             <div class="mono">${escapeHtml(cam.ingestStatus || cameraStatus(cam))}</div>
@@ -179,9 +201,12 @@ function renderCards(cameras) {
               ${statusPill(cam)}
             </div>
             <div class="camera-card__meta">
+              <div class="mono">Stable RTSP URL / NVR URL</div>
               <code class="mono rtsp-url">${escapeHtml(cam.rtspUrl || "-")}</code>
+              <div class="mono">Retained across phone reconnects.</div>
               <div class="mono">last seen ${escapeHtml(formatWhen(cam.lastSeen || cam.updatedAt))}</div>
               <div class="mono">bridge ${escapeHtml(cam.ingestStatus || cameraStatus(cam))}</div>
+              <div class="mono">quality ${escapeHtml(qualityLabel(cam.quality))}</div>
             </div>
             <div class="camera-card__actions">${actionButtons(cam)}</div>
           </div>
@@ -316,6 +341,7 @@ function renderDetail(cam) {
   el("detail-meta").innerHTML = `
     ${metaRow("Status", cameraStatus(cam))}
     ${metaRow("Bridge ingest", cam.ingestStatus || cameraStatus(cam))}
+    ${metaRow("Quality", escapeHtml(qualityLabel(cam.quality)))}
     ${metaRow("RTSP URL", `<code>${escapeHtml(cam.rtspUrl || "-")}</code>`)}
     ${metaRow("MediaMTX preview", webRtc ? `<code>${escapeHtml(webRtc)}</code>` : "Not configured")}
     ${metaRow("Created", cam.createdAt ? new Date(cam.createdAt).toLocaleString() : "-")}

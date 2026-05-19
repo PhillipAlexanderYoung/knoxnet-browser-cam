@@ -15,9 +15,12 @@ import {
   FRAME_RATE_OPTIONS,
   RESOLUTION_PRESETS,
   bitrateLabel,
+  isManualResolution,
+  resolutionModeLabel,
   type BitrateKbps,
   type FrameRate,
   type ResolutionKey,
+  type ResolutionMode,
 } from "../../webrtc/constraints";
 import "./NetworkPage.css";
 
@@ -45,9 +48,11 @@ interface NetworkPageProps {
   onBack: () => void;
   receiverInfo: ReceiverInfo | null;
   signalingState: ConnectionState;
+  currentResolution?: ResolutionKey;
 }
 
-const RESOLUTION_OPTS: { value: ResolutionKey; label: string }[] = [
+const RESOLUTION_OPTS: { value: ResolutionMode; label: string }[] = [
+  { value: "auto", label: "Auto" },
   { value: "480p", label: "854 x 480 (SD)" },
   { value: "720p", label: "1280 x 720 (HD)" },
   { value: "1080p", label: "1920 x 1080 (FHD)" },
@@ -60,6 +65,7 @@ export function NetworkPage({
   onBack,
   receiverInfo,
   signalingState,
+  currentResolution,
 }: NetworkPageProps) {
   const [showSheet, setShowSheet] = useState<
     | null
@@ -79,8 +85,11 @@ export function NetworkPage({
   useEffect(() => setDraftPair(settings.pairingCode), [settings.pairingCode]);
 
   const resolutionLabel = useMemo(
-    () => RESOLUTION_PRESETS[settings.resolution]?.label ?? settings.resolution,
-    [settings.resolution],
+    () =>
+      isManualResolution(settings.resolution)
+        ? RESOLUTION_PRESETS[settings.resolution].label
+        : resolutionModeLabel("auto", currentResolution),
+    [currentResolution, settings.resolution],
   );
 
   const connectionLabel = (() => {

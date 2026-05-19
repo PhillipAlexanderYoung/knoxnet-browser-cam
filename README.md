@@ -159,8 +159,8 @@ Use that address as `<lan-ip>` everywhere below.
    and accept the local receiver certificate. Then open/return to the QR URL,
    accept the phone app certificate if prompted, and allow camera permission.
    The app fills the receiver URL and pairing code automatically and tries to
-   start streaming. If iOS requires a user gesture, tap **Allow camera and start
-   streaming**.
+   start streaming. If permission was blocked, allow camera access in the
+   browser prompt or Settings, then tap **Retry camera access**.
 4. **Desktop dashboard:** click **Accept** on the pending camera. With
    `npm run dev:all`, the receiver already has
    `BRIDGE_URL=http://localhost:8790`, so it allocates a MediaMTX path and shows
@@ -170,17 +170,44 @@ Use that address as `<lan-ip>` everywhere below.
    browser-generated `deviceId` in localStorage; the receiver stores only that
    ID, display name, timestamps, trust/auto-accept flags, and last session in
    `receiver/data/known-devices.json` by default. No secrets or media are stored.
-6. **RTSP clients / Knoxnet VMS:** wait until the dashboard shows bridge
-   ingest `publishing`, then add the displayed
-   `rtsp://<host>:8554/<camera-slug>` URL. The phone still does not host RTSP;
-   MediaMTX does. If the status is `allocated-no-media` or `error`, VLC will not
-   have a playable stream yet.
+6. **RTSP clients / Knoxnet VMS:** trust the device, wait until the dashboard
+   shows bridge ingest `publishing`, then add the displayed **Stable RTSP URL /
+   NVR URL** (`rtsp://<host>:8554/<camera-slug>`) to Knoxnet VMS, VLC, or your
+   NVR. The phone still does not host RTSP; MediaMTX does.
 
 On reconnect, trusted known devices still need the current pairing code but can
 move from `hello` to accepted/streaming without another manual dashboard click
-when `AUTO_ACCEPT_KNOWN=true`. The phone shows a visible reconnect prompt and
-backs off for a few attempts if a previously active stream drops; tapping Stop
-cancels automatic retries.
+when `AUTO_ACCEPT_KNOWN=true`. The phone keeps a separate desired-streaming
+state after Start is tapped, automatically retries dropped WebSocket/WebRTC/WHIP
+connections with capped backoff, and keeps trying until Stop is tapped.
+
+## Long-running reliability and RTSP durability
+
+For VMS/NVR recording, use the dashboard's **Stable RTSP URL / NVR URL** after
+the phone is trusted. The bridge keys that RTSP path by the browser-generated
+`deviceId` when available instead of the transient receiver session id, so phone
+reconnects republish into the same MediaMTX path whenever possible.
+
+During a phone Wi-Fi drop, app background, receiver restart, or bridge outage,
+the phone keeps retrying while Start remains active. The dashboard may show the
+RTSP path as `recovering` or `offline`; clients may see temporary stream loss,
+but they should retry the same URL. The bridge retains offline paths for
+`RTSP_PATH_GRACE_MS` (default 10 minutes) before cleanup so VLC/Knoxnet VMS/NVR
+configs do not churn during normal reconnects.
+
+For best long-running results:
+
+- Keep the phone on wired power and on the same Wi-Fi as the receiver/bridge.
+- Keep the screen awake. Wake Lock is requested automatically where browsers
+  support it, but iOS may still suspend background tabs or drop locks.
+- Run the bridge/receiver under a supervisor such as systemd or PM2 for
+  production use.
+- Watch thermal throttling on older phones; avoid direct sun and remove thick
+  cases if the phone gets hot.
+- Older phones are usually happiest at `720p`, `15fps`, and `2 Mbps`.
+- MediaMTX is used as a publisher-backed RTSP path here. No placeholder
+  always-on video source is currently configured, so RTSP clients may disconnect
+  during upstream loss; configure clients/NVRs to retry the same stable URL.
 
 ## Standalone bridge mode
 
@@ -222,13 +249,15 @@ Important bridge environment variables:
 | `MEDIAMTX_RTSP_PORT` | `8554` | RTSP egress port. |
 | `MEDIAMTX_WEBRTC_PORT` | `8889` | MediaMTX WHIP/WHEP HTTP port. |
 | `MEDIAMTX_API_PORT` | `9997` | MediaMTX local control API port. |
+| `RTSP_PATH_GRACE_MS` | `600000` | How long the bridge retains an offline stable RTSP path before cleanup. |
 
-Current RTSP status: the bridge implements path allocation, MediaMTX config
-generation/process management, receiver-side WHIP relay, and dashboard RTSP URL
-display. The receiver marks cameras `negotiating` while the WHIP offer is being
-posted to MediaMTX and only marks the bridge `publishing` after MediaMTX returns
-an answer. A complete end-to-end RTSP stream requires a MediaMTX binary available
-on `PATH`, in `/home/operator1/Documents/Knoxnet-VMS/mediamtx/mediamtx`, or via
+Current RTSP status: the bridge implements stable path allocation,
+MediaMTX config generation/process management, receiver-side WHIP relay, and
+dashboard Stable RTSP URL / NVR URL display. The receiver marks cameras
+`negotiating` while the WHIP offer is being posted to MediaMTX and only marks
+the bridge `publishing` after MediaMTX returns an answer. A complete end-to-end
+RTSP stream requires a MediaMTX binary available on `PATH`, in
+`/home/operator1/Documents/Knoxnet-VMS/mediamtx/mediamtx`, or via
 `MEDIAMTX_BINARY`. WHIP trickle-ICE PATCH support is marked as follow-up in code.
 
 ## HTTPS caveat (important for phones)

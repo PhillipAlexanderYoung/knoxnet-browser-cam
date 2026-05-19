@@ -134,6 +134,7 @@ export default function App() {
             deviceId: clientDeviceId,
             pairingCode: settings.pairingCode,
             discoverable: true,
+            quality: api.quality,
           }),
         );
         ws?.close();
@@ -159,18 +160,26 @@ export default function App() {
     clientDeviceId,
   ]);
 
-  // Wake lock while streaming
+  // Wake lock while the user wants streaming; browsers may drop it on background.
   useEffect(() => {
-    if (api.state !== "streaming") return;
+    if (!api.shouldStream) return;
     type SentinelLike = { release: () => Promise<void> };
     let lock: SentinelLike | null = null;
     let cancelled = false;
-    (async () => {
+    const requestLock = async () => {
+      if (document.visibilityState !== "visible") return;
       try {
         const wl = (navigator as Navigator & {
           wakeLock?: { request: (t: string) => Promise<SentinelLike> };
         }).wakeLock;
         if (wl && typeof wl.request === "function") {
+          if (lock) {
+            try {
+              await lock.release();
+            } catch {
+              // ignore
+            }
+          }
           lock = await wl.request("screen");
         }
       } catch {
@@ -183,9 +192,15 @@ export default function App() {
           // ignore
         }
       }
-    })();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void requestLock();
+    };
+    void requestLock();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibility);
       if (lock) {
         try {
           void lock.release();
@@ -194,7 +209,7 @@ export default function App() {
         }
       }
     };
-  }, [api.state]);
+  }, [api.shouldStream, api.state]);
 
   const onChangeSettings = useCallback((next: CameraSettings) => {
     setSettings(next);
@@ -238,6 +253,7 @@ export default function App() {
           onBack={() => setTab("camera")}
           receiverInfo={receiverInfo}
           signalingState={api.state}
+          currentResolution={api.quality.currentResolution}
         />
       )}
       {tab === "info" && <InfoPage />}

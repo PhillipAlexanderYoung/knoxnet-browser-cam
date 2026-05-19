@@ -63,9 +63,13 @@ function renderInfo(info) {
   el("pairing-qr").src = `/api/pair-qr?ts=${Date.now()}`;
   const bridge = el("bridge-status");
   if (bridge) {
-    bridge.textContent = info.bridgeUrl
-      ? `Bridge connected: ${info.bridgeUrl}. RTSP paths appear after you accept a camera.`
-      : "RTSP bridge disabled. Use npm run receiver:dev-phone for phone pairing only, or npm run dev:all for the RTSP bridge too.";
+    if (!info.bridgeUrl) {
+      bridge.textContent = "RTSP bridge disabled. Use npm run receiver:dev-phone for phone pairing only, or npm run dev:all for the RTSP bridge too.";
+    } else if (info.bridgeHealth?.ok) {
+      bridge.textContent = `Bridge connected: ${info.bridgeUrl}. Use each Stable RTSP URL / NVR URL after accepting and trusting a camera.`;
+    } else {
+      bridge.textContent = `Bridge down: ${info.bridgeUrl}. Phones will keep reconnecting; stable RTSP URLs recover when the bridge returns.`;
+    }
   }
   const mode = el("accept-mode");
   if (mode) {
@@ -92,12 +96,26 @@ function statusForCamera(cam) {
 function bridgePhase(cam) {
   if (!cam.bridge) return "";
   if (cam.bridge.ingestStatus === "publishing") return "RTSP live";
+  if (cam.bridge.ingestStatus === "recovering") return "RTSP recovering; stable URL retained";
+  if (cam.bridge.ingestStatus === "offline") return "RTSP offline; stable URL retained";
   if (cam.bridge.ingestStatus === "error") return `RTSP error${cam.bridge.lastError ? ": " + cam.bridge.lastError : ""}`;
   return "RTSP allocated; waiting for WHIP media";
 }
 
 function bridgePreviewUrl(cam) {
   return cam.bridge?.preview?.webRtcUrl || cam.bridge?.previewUrls?.webRtc || "";
+}
+
+function qualityLabel(quality) {
+  if (!quality) return "";
+  const current = quality.currentResolution || (quality.height ? `${quality.height}p` : "");
+  const mode = quality.mode === "auto"
+    ? `Auto${current ? ` (${current})` : ""}`
+    : (quality.currentResolution || quality.requestedResolution || quality.mode);
+  const details = [];
+  if (quality.frameRate) details.push(`${Math.round(quality.frameRate)}fps`);
+  if (quality.bitrateKbps) details.push(`${Math.round(quality.bitrateKbps)} kbps`);
+  return [mode, ...details].filter(Boolean).join(" / ");
 }
 
 function renderCameras() {
@@ -118,6 +136,7 @@ function renderCameras() {
     const capBits = [];
     if (cam.capabilities?.audio) capBits.push("audio");
     if (cam.capabilities?.torch) capBits.push("torch");
+    const quality = qualityLabel(cam.quality || cam.capabilities?.quality || cam.bridge?.quality);
     const known = cam.deviceId ? state.knownDevices.get(cam.deviceId) : null;
     const staleText =
       cam.status === "disconnected" && cam.disconnectReason
@@ -125,9 +144,10 @@ function renderCameras() {
         : "";
     const rtsp = cam.bridge?.rtspUrl
       ? `<div class="camera__rtsp">
-          <span>${cam.bridge.ingestStatus === "publishing" ? "RTSP live" : "RTSP not live yet"}</span>
+          <span>${cam.bridge.ingestStatus === "publishing" ? "Stable RTSP URL / NVR URL live" : "Stable RTSP URL / NVR URL retained"}</span>
           <code>${escapeHtml(cam.bridge.rtspUrl)}</code>
           <button class="btn btn--ghost" data-action="copy-rtsp" data-id="${cam.sessionId}">Copy</button>
+          <small>NVRs should use this URL. The stream may pause during phone reconnects, but the URL should not change.</small>
         </div>`
       : "";
     const bridge = bridgePhase(cam);
@@ -142,6 +162,7 @@ function renderCameras() {
           ${cam.reconnectCount ? "• reconnects: " + escapeHtml(cam.reconnectCount) : ""}
           ${cam.remoteAddress ? "• " + escapeHtml(cam.remoteAddress) : ""}
           ${capBits.length ? "• " + capBits.join(", ") : ""}
+          ${quality ? "• quality: " + escapeHtml(quality) : ""}
           ${bridge ? "• bridge: " + escapeHtml(bridge) : ""}
           ${staleText}
         </div>
@@ -564,4 +585,11 @@ async function openViewer(sessionId) {
     return;
   }
   openLobbyWs();
+  setInterval(async () => {
+    try {
+      renderInfo(await fetchInfo());
+    } catch (err) {
+      console.warn("refresh info", err);
+    }
+  }, 8000);
 })();

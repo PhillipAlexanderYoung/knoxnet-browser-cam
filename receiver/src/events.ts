@@ -6,6 +6,8 @@ export type ReceiverEventType =
   | "disconnected"
   | "reconnect"
   | "bridge-allocated"
+  | "bridge-republish-started"
+  | "bridge-publishing"
   | "bridge-failed"
   | "stale-cleaned"
   | "device-trusted"

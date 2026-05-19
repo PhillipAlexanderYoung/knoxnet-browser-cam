@@ -7,7 +7,7 @@ export interface CameraSettings {
   discoverable: boolean;
   preferredFacingMode: "user" | "environment";
   preferredDeviceId?: string;
-  resolution: "480p" | "720p" | "1080p";
+  resolution: "auto" | "480p" | "720p" | "1080p";
   frameRate: 5 | 10 | 15 | 30;
   bitrateKbps: 500 | 1000 | 2000 | 4000;
   audioEnabled: boolean;
@@ -25,7 +25,7 @@ export const DEFAULT_SETTINGS: CameraSettings = {
   discoverable: true,
   preferredFacingMode: "environment",
   preferredDeviceId: undefined,
-  resolution: "720p",
+  resolution: "auto",
   frameRate: 15,
   bitrateKbps: 2000,
   audioEnabled: false,

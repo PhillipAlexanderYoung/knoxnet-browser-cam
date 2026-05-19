@@ -6,8 +6,9 @@ export interface BridgeAllocation {
   path: string;
   rtspUrl: string;
   whipUrl?: string;
-  ingestStatus?: "allocated" | "publishing" | "error";
+  ingestStatus?: "allocated" | "publishing" | "recovering" | "offline" | "error";
   lastError?: string;
+  quality?: CameraRecord["quality"];
 }
 
 export interface BridgePublishResult {
@@ -22,7 +23,9 @@ export interface BridgeClient {
     camera: CameraRecord,
     offerSdp: string,
   ) => Promise<BridgePublishResult>;
-  removeCamera: (cameraId: string) => Promise<void>;
+  markCameraOffline: (camera: CameraRecord, reason?: string) => Promise<void>;
+  removeCamera: (camera: CameraRecord | string, permanent?: boolean) => Promise<void>;
+  health: () => Promise<{ ok: boolean; mediamtx?: unknown; error?: string }>;
 }
 
 export function createBridgeClient(
@@ -31,6 +34,10 @@ export function createBridgeClient(
 ): BridgeClient | null {
   const baseUrl = bridgeUrl?.replace(/\/+$/, "");
   if (!baseUrl) return null;
+
+  function bridgeCameraId(camera: CameraRecord): string {
+    return camera.deviceId ? `device-${camera.deviceId}` : `session-${camera.sessionId}`;
+  }
 
   async function requestJson<T>(
     path: string,
@@ -59,15 +66,19 @@ export function createBridgeClient(
 
   return {
     async allocateCamera(camera) {
+      const stableCameraId = bridgeCameraId(camera);
       const result = await requestJson<{ ok: boolean; camera: BridgeAllocation }>(
         "/api/cameras",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            cameraId: camera.sessionId,
+            cameraId: stableCameraId,
+            sessionId: camera.sessionId,
+            deviceId: camera.deviceId,
             name: camera.name,
-            pathHint: camera.name || camera.sessionId,
+            pathHint: camera.name || camera.deviceId || camera.sessionId,
+            quality: camera.quality,
           }),
         },
       );
@@ -75,14 +86,15 @@ export function createBridgeClient(
     },
 
     async publishOffer(camera, offerSdp) {
+      const cameraId = camera.bridge?.cameraId ?? bridgeCameraId(camera);
       const result = await requestJson<{
         ok: boolean;
         sdp: { type: "answer"; sdp: string };
         camera?: BridgeAllocation;
-      }>(`/api/cameras/${encodeURIComponent(camera.sessionId)}/whip`, {
+      }>(`/api/cameras/${encodeURIComponent(cameraId)}/whip`, {
         method: "POST",
-        headers: { "Content-Type": "application/sdp", Accept: "application/json" },
-        body: offerSdp,
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ sdp: offerSdp, quality: camera.quality }),
       });
       if (result.body?.camera) {
         camera.bridge = result.body.camera;
@@ -94,10 +106,39 @@ export function createBridgeClient(
       };
     },
 
-    async removeCamera(cameraId) {
-      await requestJson<{ ok: boolean }>(`/api/cameras/${encodeURIComponent(cameraId)}`, {
+    async markCameraOffline(camera, reason = "receiver-disconnect") {
+      const cameraId = camera.bridge?.cameraId ?? bridgeCameraId(camera);
+      await requestJson<{ ok: boolean }>(
+        `/api/cameras/${encodeURIComponent(cameraId)}/offline`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason }),
+        },
+      );
+    },
+
+    async removeCamera(cameraOrId, permanent = false) {
+      const cameraId =
+        typeof cameraOrId === "string"
+          ? cameraOrId
+          : cameraOrId.bridge?.cameraId ?? bridgeCameraId(cameraOrId);
+      const suffix = permanent ? "?permanent=1" : "";
+      await requestJson<{ ok: boolean }>(`/api/cameras/${encodeURIComponent(cameraId)}${suffix}`, {
         method: "DELETE",
       });
+    },
+
+    async health() {
+      const result = await requestJson<{ ok: boolean; mediamtx?: unknown }>(
+        "/api/health",
+        { method: "GET" },
+      );
+      return {
+        ok: result.ok && Boolean(result.body?.ok),
+        mediamtx: result.body?.mediamtx,
+        error: result.error,
+      };
     },
   };
 }

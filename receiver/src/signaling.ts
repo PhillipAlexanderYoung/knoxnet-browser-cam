@@ -8,6 +8,7 @@ import {
   touchCamera,
   validatePairingCode,
   type CameraCapabilities,
+  type CameraQualityInfo,
   type CameraRecord,
   type PairingState,
 } from "./pairing.js";
@@ -53,7 +54,9 @@ export type SignalingMessage =
       deviceId?: string;
       pairingCode: string;
       discoverable: boolean;
+      quality?: CameraQualityInfo;
     }
+  | { type: "quality"; sessionId: string; quality: CameraQualityInfo }
   | { type: "error"; message: string }
   | { type: "ping" }
   | { type: "pong" };
@@ -160,12 +163,28 @@ export function attachSignaling(
     if (bridge) cam.bridge = bridge;
   }
 
+  function applyQualityUpdate(cam: CameraRecord, quality: CameraQualityInfo): void {
+    cam.quality = quality;
+    cam.capabilities = {
+      ...cam.capabilities,
+      quality,
+    };
+    if (cam.bridge) {
+      cam.bridge.quality = quality;
+    }
+  }
+
   function detach(ws: WebSocket): void {
     const ctx = clients.get(ws);
     if (!ctx) return;
     if (ctx.role === "camera" && ctx.sessionId) {
       cameraSockets.delete(ctx.sessionId);
       const cam = setCameraStatus(state, ctx.sessionId, "disconnected", "socket-closed");
+      if (cam?.bridge) {
+        cam.bridge.ingestStatus = "recovering";
+        cam.bridge.lastError = "Phone disconnected; preserving stable RTSP path for reconnect.";
+        void bridgeClient?.markCameraOffline(cam, "socket-closed");
+      }
       if (cam) broadcastCameraUpdate(cam);
       emitEvent({
         type: "disconnected",
@@ -235,7 +254,6 @@ export function attachSignaling(
       if (cam.sessionId !== primary?.sessionId) {
         removeCamera(state, cam.sessionId);
       }
-      if (bridgeClient) await bridgeClient.removeCamera(cam.sessionId);
       emitEvent({
         type: "reconnect",
         sessionId: cam.sessionId,
@@ -427,6 +445,18 @@ export function attachSignaling(
           );
           return;
         }
+        case "quality": {
+          if (!ctx.pairingValidated || ctx.role !== "camera") {
+            send(ws, { type: "error", message: "not-paired" });
+            return;
+          }
+          const cam = state.cameras.get(msg.sessionId);
+          if (!cam || cam.sessionId !== ctx.sessionId) return;
+          applyQualityUpdate(cam, msg.quality);
+          touchCamera(state, msg.sessionId);
+          broadcastCameraUpdate(cam);
+          return;
+        }
         case "offer":
         case "answer":
         case "ice":
@@ -451,7 +481,18 @@ export function attachSignaling(
                   `offer received sessionId=${targetSession}; requesting bridge WHIP path=${cam.bridge.path}`,
                 );
                 const negotiating = setCameraStatus(state, targetSession, "negotiating");
+                if (negotiating?.bridge) {
+                  negotiating.bridge.ingestStatus = "recovering";
+                  negotiating.bridge.lastError = "Bridge republish started.";
+                }
                 if (negotiating) broadcastCameraUpdate(negotiating);
+                emitEvent({
+                  type: "bridge-republish-started",
+                  sessionId: targetSession,
+                  deviceId: cam.deviceId,
+                  name: cam.name,
+                  message: `Bridge republish started for stable RTSP path ${cam.bridge.path}`,
+                });
                 void bridgeClient.publishOffer(cam, msg.sdp.sdp).then((result) => {
                   applyBridgeUpdate(cam, result.camera);
                   if (!result.answer) {
@@ -493,6 +534,13 @@ export function attachSignaling(
                     broadcastCameraUpdate(updated);
                   }
                   log(`stream connected sessionId=${targetSession} rtsp=${cam.bridge?.rtspUrl}`);
+                  emitEvent({
+                    type: "bridge-publishing",
+                    sessionId: targetSession,
+                    deviceId: cam.deviceId,
+                    name: cam.name,
+                    message: `Bridge publishing on stable RTSP path ${cam.bridge?.path ?? ""}`,
+                  });
                   emitEvent({
                     type: "connected",
                     sessionId: targetSession,
@@ -536,6 +584,11 @@ export function attachSignaling(
             }
             if (msg.type === "bye") {
               const updated = setCameraStatus(state, targetSession, "accepted");
+              if (updated?.bridge) {
+                updated.bridge.ingestStatus = "recovering";
+                updated.bridge.lastError = "Phone stopped publishing; stable RTSP path preserved.";
+                void bridgeClient?.markCameraOffline(updated, "bye");
+              }
               if (updated) broadcastCameraUpdate(updated);
               log(`stream disconnected sessionId=${targetSession}`);
               emitEvent({

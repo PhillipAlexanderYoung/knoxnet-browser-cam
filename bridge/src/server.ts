@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { MediaMtxManager } from "./mediamtx.js";
-import { CameraRegistry } from "./registry.js";
+import { CameraRegistry, type CameraQualityInfo } from "./registry.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -99,9 +99,10 @@ async function handleWhipRelay(
 
   const contentType = req.headers["content-type"] ?? "";
   const raw = await readBody(req);
-  const offerSdp = contentType.includes("application/json")
-    ? String((JSON.parse(raw) as { sdp?: string }).sdp ?? "")
-    : raw;
+  const body = contentType.includes("application/json")
+    ? (JSON.parse(raw) as { sdp?: string; quality?: unknown })
+    : null;
+  const offerSdp = body ? String(body.sdp ?? "") : raw;
 
   if (!offerSdp.trim()) {
     json(res, 400, { ok: false, error: "missing-sdp" });
@@ -110,6 +111,14 @@ async function handleWhipRelay(
 
   try {
     log(`WHIP offer received cameraId=${cameraId} path=${camera.path}`);
+    if (camera.whipSessionUrl) {
+      try {
+        await fetch(new URL(camera.whipSessionUrl, camera.whipUrl), { method: "DELETE" });
+        log(`previous WHIP publisher closed cameraId=${cameraId} path=${camera.path}`);
+      } catch (err) {
+        log(`previous WHIP publisher cleanup failed cameraId=${cameraId}:`, err);
+      }
+    }
     const upstream = await fetch(camera.whipUrl, {
       method: "POST",
       headers: {
@@ -123,7 +132,10 @@ async function handleWhipRelay(
       throw new Error(`mediamtx-whip-${upstream.status}: ${answerSdp.slice(0, 200)}`);
     }
     const location = upstream.headers.get("location") ?? undefined;
-    registry.markPublishing(cameraId, { whipSessionUrl: location });
+    registry.markPublishing(cameraId, {
+      whipSessionUrl: location,
+      quality: body?.quality as CameraQualityInfo | undefined,
+    });
     log(`WHIP publish accepted cameraId=${cameraId} rtsp=${camera.rtspUrl}`);
     json(res, 200, {
       ok: true,
@@ -152,6 +164,7 @@ const server = createServer(async (req, res) => {
         ok: true,
         service: "knoxnet-browser-cam-bridge",
         mediamtx: await mediaMtx.status(),
+        rtspPathGraceMs: config.rtspPathGraceMs,
         urls: {
           rtspBase: `rtsp://${config.publicHost}:${config.mediaMtxRtspPort}`,
           whipBase: `http://${config.mediaMtxInternalHost}:${config.mediaMtxWebRtcPort}`,
@@ -183,8 +196,11 @@ const server = createServer(async (req, res) => {
     if (req.method === "POST" && pathname === "/api/cameras") {
       const body = JSON.parse(await readBody(req, 64 * 1024)) as {
         cameraId?: string;
+        sessionId?: string;
+        deviceId?: string;
         name?: string;
         pathHint?: string;
+        quality?: CameraQualityInfo;
       };
       if (!body.cameraId) {
         json(res, 400, { ok: false, error: "missing-cameraId" });
@@ -192,8 +208,11 @@ const server = createServer(async (req, res) => {
       }
       const camera = registry.allocate({
         cameraId: body.cameraId,
+        sessionId: body.sessionId,
+        deviceId: body.deviceId,
         name: body.name,
         pathHint: body.pathHint,
+        quality: body.quality,
       });
       log(`allocated cameraId=${camera.cameraId} path=${camera.path} rtsp=${camera.rtspUrl}`);
       json(res, 200, { ok: true, camera });
@@ -206,8 +225,34 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    const offlineCameraId = extractCameraId(pathname, "/offline");
+    if (req.method === "POST" && offlineCameraId) {
+      let reason = "publisher-offline";
+      try {
+        const body = JSON.parse(await readBody(req, 64 * 1024) || "{}") as {
+          reason?: string;
+        };
+        reason = body.reason || reason;
+      } catch {
+        // Keep the default reason when the body is empty or malformed.
+      }
+      const camera = registry.markOffline(
+        offlineCameraId,
+        `${reason}; stable RTSP URL retained for ${Math.round(config.rtspPathGraceMs / 1000)}s.`,
+      );
+      if (!camera) {
+        json(res, 404, { ok: false, error: "not-found" });
+        return;
+      }
+      log(`marked offline cameraId=${offlineCameraId} path=${camera.path}`);
+      json(res, 200, { ok: true, camera });
+      return;
+    }
+
     if (req.method === "DELETE" && cameraId) {
-      json(res, 200, { ok: registry.remove(cameraId) });
+      const permanent = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`)
+        .searchParams.get("permanent") === "1";
+      json(res, 200, { ok: registry.remove(cameraId, { permanent }) });
       return;
     }
 
@@ -223,6 +268,14 @@ const server = createServer(async (req, res) => {
 
 await mediaMtx.start();
 
+const cleanupTimer = setInterval(() => {
+  const removed = registry.cleanupExpired();
+  for (const cameraId of removed) {
+    log(`expired retained RTSP path cameraId=${cameraId}`);
+  }
+}, Math.min(Math.max(config.rtspPathGraceMs / 2, 30_000), 60_000));
+cleanupTimer.unref();
+
 server.listen(config.bridgePort, config.bridgeHost, () => {
   log(`HTTP API listening on http://${config.bridgeHost}:${config.bridgePort}`);
   log(`MediaMTX config: ${config.mediaMtxConfigPath}`);
@@ -231,6 +284,7 @@ server.listen(config.bridgePort, config.bridgeHost, () => {
 
 async function shutdown(signal: string): Promise<void> {
   log(`received ${signal}, shutting down`);
+  clearInterval(cleanupTimer);
   server.close();
   await mediaMtx.stop();
   process.exit(0);

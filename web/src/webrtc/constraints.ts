@@ -1,4 +1,5 @@
 export type ResolutionKey = "480p" | "720p" | "1080p";
+export type ResolutionMode = "auto" | ResolutionKey;
 
 export const RESOLUTION_PRESETS: Record<
   ResolutionKey,
@@ -9,6 +10,9 @@ export const RESOLUTION_PRESETS: Record<
   "1080p": { width: 1920, height: 1080, label: "1920 x 1080 (FHD)" },
 };
 
+export const RESOLUTION_OPTIONS = ["auto", "480p", "720p", "1080p"] as const;
+export const MANUAL_RESOLUTION_OPTIONS = ["480p", "720p", "1080p"] as const;
+
 export const FRAME_RATE_OPTIONS = [5, 10, 15, 30] as const;
 export type FrameRate = (typeof FRAME_RATE_OPTIONS)[number];
 
@@ -18,6 +22,21 @@ export type BitrateKbps = (typeof BITRATE_OPTIONS)[number];
 export function bitrateLabel(kbps: number): string {
   if (kbps >= 1000) return `${(kbps / 1000).toString()} Mbps`;
   return `${kbps} Kbps`;
+}
+
+export function isManualResolution(value: ResolutionMode): value is ResolutionKey {
+  return value !== "auto";
+}
+
+export function resolutionFromHeight(height: number): ResolutionKey {
+  if (height >= 1080) return "1080p";
+  if (height >= 720) return "720p";
+  return "480p";
+}
+
+export function resolutionModeLabel(mode: ResolutionMode, current?: ResolutionKey): string {
+  if (mode === "auto") return current ? `Auto (${current})` : "Auto";
+  return mode;
 }
 
 export function buildVideoConstraints(opts: {

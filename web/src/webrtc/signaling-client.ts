@@ -14,6 +14,18 @@ export type CameraCapabilities = {
   torch?: boolean;
   audio?: boolean;
   facingModes?: string[];
+  quality?: CameraQualityInfo;
+};
+
+export type CameraQualityInfo = {
+  mode: string;
+  requestedResolution?: string;
+  currentResolution?: string;
+  width?: number;
+  height?: number;
+  frameRate?: number;
+  bitrateKbps?: number;
+  message?: string | null;
 };
 
 export type IncomingMessage =
@@ -32,8 +44,9 @@ export interface BridgeAllocation {
   path: string;
   rtspUrl: string;
   whipUrl?: string;
-  ingestStatus?: "allocated" | "publishing" | "error";
+  ingestStatus?: "allocated" | "publishing" | "recovering" | "offline" | "error";
   lastError?: string;
+  quality?: CameraQualityInfo;
 }
 
 export type OutgoingMessage =
@@ -51,9 +64,11 @@ export type OutgoingMessage =
       deviceId: string;
       pairingCode: string;
       discoverable: boolean;
+      quality?: CameraQualityInfo;
     }
   | { type: "offer"; sessionId: string; sdp: RTCSessionDescriptionInit }
   | { type: "ice"; sessionId: string; candidate: RTCIceCandidateInit | null }
+  | { type: "quality"; sessionId: string; quality: CameraQualityInfo }
   | { type: "bye"; sessionId: string }
   | { type: "ping" };
 
@@ -65,6 +80,8 @@ export interface SignalingStateDetail {
   reason?: string;
   wasClean?: boolean;
   closedByClient?: boolean;
+  opened?: boolean;
+  elapsedMs?: number;
 }
 
 export interface SignalingClientOptions {
@@ -84,6 +101,8 @@ export class SignalingClient {
   private readonly onStateChange: SignalingClientOptions["onStateChange"];
   private readonly onLog: NonNullable<SignalingClientOptions["onLog"]>;
   private closedByUs = false;
+  private opened = false;
+  private startedAt = 0;
 
   constructor(opts: SignalingClientOptions) {
     this.url = opts.url;
@@ -94,6 +113,8 @@ export class SignalingClient {
 
   connect(): void {
     this.closedByUs = false;
+    this.opened = false;
+    this.startedAt = performance.now();
     this.onStateChange("connecting", { url: this.url });
     let ws: WebSocket;
     try {
@@ -107,12 +128,21 @@ export class SignalingClient {
       return;
     }
     this.ws = ws;
-    ws.onopen = () => this.onStateChange("open", { url: this.url });
+    ws.onopen = () => {
+      this.opened = true;
+      this.onStateChange("open", {
+        url: this.url,
+        opened: true,
+        elapsedMs: performance.now() - this.startedAt,
+      });
+    };
     ws.onerror = (ev) => {
       this.onLog("ws error", ev);
       this.onStateChange("error", {
         url: this.url,
         eventType: ev.type,
+        opened: this.opened,
+        elapsedMs: performance.now() - this.startedAt,
         message:
           "message" in ev && typeof ev.message === "string"
             ? ev.message
@@ -127,6 +157,8 @@ export class SignalingClient {
         reason: ev.reason,
         wasClean: ev.wasClean,
         closedByClient: this.closedByUs,
+        opened: this.opened,
+        elapsedMs: performance.now() - this.startedAt,
       });
       this.ws = null;
     };

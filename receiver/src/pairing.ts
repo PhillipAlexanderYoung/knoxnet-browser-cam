@@ -20,6 +20,18 @@ export interface CameraCapabilities {
   torch?: boolean;
   audio?: boolean;
   facingModes?: string[];
+  quality?: CameraQualityInfo;
+}
+
+export interface CameraQualityInfo {
+  mode: string;
+  requestedResolution?: string;
+  currentResolution?: string;
+  width?: number;
+  height?: number;
+  frameRate?: number;
+  bitrateKbps?: number;
+  message?: string | null;
 }
 
 export interface CameraRecord {
@@ -28,14 +40,16 @@ export interface CameraRecord {
   name: string;
   status: CameraStatus;
   capabilities: CameraCapabilities;
+  quality?: CameraQualityInfo;
   bridge?: {
     cameraId: string;
     name: string;
     path: string;
     rtspUrl: string;
     whipUrl?: string;
-    ingestStatus?: "allocated" | "publishing" | "error";
+    ingestStatus?: "allocated" | "publishing" | "recovering" | "offline" | "error";
     lastError?: string;
+    quality?: CameraQualityInfo;
   };
   createdAt: string;
   lastSeen: string;
@@ -98,11 +112,17 @@ export function registerCamera(
     name: params.name || previous?.name || `phone-cam-${sessionId.slice(0, 4)}`,
     status: "pending",
     capabilities: params.capabilities ?? {},
+    quality: params.capabilities?.quality,
     createdAt: previous?.createdAt ?? now,
     lastSeen: now,
     reconnectCount: previous ? (previous.reconnectCount ?? 0) + 1 : 0,
     remoteAddress: params.remoteAddress,
   };
+  if (previous?.bridge) {
+    record.bridge = previous.bridge;
+    record.bridge.ingestStatus = "recovering";
+    record.bridge.lastError = "Known device reconnected; waiting for republish.";
+  }
   state.cameras.set(sessionId, record);
   return record;
 }
