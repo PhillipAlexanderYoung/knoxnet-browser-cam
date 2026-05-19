@@ -64,7 +64,7 @@ together:
 
 | Process  | Default URL                     | Purpose                          |
 | -------- | ------------------------------- | -------------------------------- |
-| bridge   | http://localhost:8790           | Allocates RTSP paths via MediaMTX |
+| bridge   | http://localhost:8790           | RTSP path API + bridge dashboard |
 | receiver | https://<lan-ip>:8787           | Dashboard + WSS signaling + /api |
 | web      | https://<lan-ip>:5173           | The phone-side UI (Vite HTTPS)   |
 
@@ -141,6 +141,23 @@ cd /home/operator1/Documents/knoxnet-browser-cam
 npm run bridge
 curl http://localhost:8790/api/health
 ```
+
+Open the standalone bridge dashboard at:
+
+```text
+http://<host>:8790/
+```
+
+The dashboard is a dense dark/green camera list for bridge-managed RTSP paths.
+It shows each camera name, session/path, ingest status, RTSP URL, last-seen
+time, copy/remove actions, and a detail preview panel. Browser previews are
+honest: browsers cannot play RTSP directly, so the bridge only embeds a live
+preview when MediaMTX WebRTC egress is configured and the path is publishing.
+The generated MediaMTX config enables WebRTC on `MEDIAMTX_WEBRTC_PORT` and the
+dashboard uses `http://<BRIDGE_PUBLIC_HOST>:8889/<camera-path>` as the preview
+candidate. If that URL is unavailable, the dashboard shows a placeholder and
+instructions to use VLC/Knoxnet VMS with the RTSP URL or enable MediaMTX
+WebRTC/HLS egress.
 
 Important bridge environment variables:
 

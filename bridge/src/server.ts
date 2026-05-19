@@ -1,7 +1,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { MediaMtxManager } from "./mediamtx.js";
 import { CameraRegistry } from "./registry.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const STATIC_DIR = path.resolve(__dirname, "public");
 
 const config = loadConfig();
 const mediaMtx = new MediaMtxManager(config);
@@ -20,6 +27,35 @@ function json(res: ServerResponse, status: number, body: unknown): void {
     "Cache-Control": "no-store",
   });
   res.end(payload);
+}
+
+function contentTypeFor(filePath: string): string {
+  if (filePath.endsWith(".html")) return "text/html; charset=utf-8";
+  if (filePath.endsWith(".css")) return "text/css; charset=utf-8";
+  if (filePath.endsWith(".js")) return "text/javascript; charset=utf-8";
+  if (filePath.endsWith(".svg")) return "image/svg+xml";
+  return "application/octet-stream";
+}
+
+async function serveStatic(res: ServerResponse, pathname: string): Promise<boolean> {
+  const fileName = pathname === "/" ? "index.html" : pathname.slice(1);
+  if (!["index.html", "dashboard.css", "dashboard.js"].includes(fileName)) {
+    return false;
+  }
+
+  try {
+    const filePath = path.join(STATIC_DIR, fileName);
+    const payload = await fs.readFile(filePath);
+    res.writeHead(200, {
+      "Content-Type": contentTypeFor(filePath),
+      "Content-Length": payload.byteLength,
+      "Cache-Control": fileName === "index.html" ? "no-store" : "public, max-age=60",
+    });
+    res.end(payload);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function readBody(req: IncomingMessage, limitBytes = 512 * 1024): Promise<string> {
@@ -104,6 +140,10 @@ const server = createServer(async (req, res) => {
   try {
     const pathname = routePath(req);
 
+    if (req.method === "GET" && (await serveStatic(res, pathname))) {
+      return;
+    }
+
     if (req.method === "GET" && pathname === "/api/health") {
       json(res, 200, {
         ok: true,
@@ -112,6 +152,8 @@ const server = createServer(async (req, res) => {
         urls: {
           rtspBase: `rtsp://${config.publicHost}:${config.mediaMtxRtspPort}`,
           whipBase: `http://${config.mediaMtxInternalHost}:${config.mediaMtxWebRtcPort}`,
+          webRtcBase: `http://${config.publicHost}:${config.mediaMtxWebRtcPort}`,
+          hlsBase: null,
         },
         cameras: registry.list(),
         ts: new Date().toISOString(),
@@ -121,6 +163,17 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "GET" && pathname === "/api/cameras") {
       json(res, 200, { cameras: registry.list() });
+      return;
+    }
+
+    const cameraId = extractCameraId(pathname);
+    if (req.method === "GET" && cameraId) {
+      const camera = registry.get(cameraId);
+      if (!camera) {
+        json(res, 404, { ok: false, error: "not-found" });
+        return;
+      }
+      json(res, 200, { ok: true, camera });
       return;
     }
 
@@ -149,7 +202,6 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    const cameraId = extractCameraId(pathname);
     if (req.method === "DELETE" && cameraId) {
       json(res, 200, { ok: registry.remove(cameraId) });
       return;
