@@ -66,6 +66,16 @@ npm run dev
 | receiver | http://localhost:8787          | Dashboard + signaling + /api     |
 | web      | http://localhost:5173          | The phone-side UI (Vite)         |
 
+For phone testing over a LAN IP, prefer:
+
+```bash
+npm run dev:https
+```
+
+This keeps the receiver local on `http://<lan-ip>:8787` / `ws://<lan-ip>:8787/ws`
+and serves the Vite camera UI from `https://<lan-ip>:5173` with a local
+self-signed certificate.
+
 On boot, the receiver prints its **pairing code** and a **pairing URL**
 (plus an ASCII QR). Example log:
 
@@ -120,16 +130,18 @@ Most phone browsers refuse `getUserMedia` on plain `http://<lan-ip>` (only
 
 ### Option B — run Vite with HTTPS
 
-Vite can self-sign a cert:
+The root script starts the receiver and Vite HTTPS together:
 
 ```bash
 # from repo root
-npx --yes -p vite vite --https --host 0.0.0.0
-# or modify web/vite.config.ts to set server.https = true and use a real cert
+npm run dev:https
 ```
 
-Then on the phone visit `https://<lan-ip>:5173/?receiver=…&pair=…` and accept
-the self-signed cert prompt.
+It creates a local self-signed cert in `.cert/` using `openssl`, then runs the
+Vite dev server with built-in HTTPS options. On the phone visit
+`https://<lan-ip>:5173/?receiver=…&pair=…` and accept the certificate warning.
+The receiver and WebRTC media path remain on your LAN; no cloud video service is
+introduced.
 
 ### Option C — local TLS reverse proxy
 
@@ -143,6 +155,7 @@ front both ports with a single HTTPS origin. Out of scope here; see Caddy's
 | ------------------ | --------------------------------------------------------------------------- |
 | `npm install`      | Installs both workspaces (web + receiver).                                  |
 | `npm run dev`      | Runs receiver and Vite dev server concurrently.                             |
+| `npm run dev:https`| Runs receiver and Vite over local HTTPS for phone camera testing.            |
 | `npm run receiver` | Just the receiver (`tsx watch src/server.ts`).                              |
 | `npm run web`      | Just the Vite dev server on `:5173`.                                        |
 | `npm run build`    | `tsc --noEmit` + `vite build` for `web/`; `tsc -p` + static-copy for receiver. |

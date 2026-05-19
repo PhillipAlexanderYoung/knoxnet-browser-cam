@@ -98,6 +98,7 @@ export function CameraPage({
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [previewActive, setPreviewActive] = useState(false);
   const previewedFor = useRef<string>("");
+  const cameraAccessError = api.cameraAccessError;
 
   useEffect(() => {
     if (videoRef.current && api.stream) {
@@ -111,6 +112,10 @@ export function CameraPage({
     const key = `${settings.preferredFacingMode}|${settings.preferredDeviceId ?? ""}|${settings.resolution}|${settings.frameRate}|${settings.audioEnabled}`;
     if (previewedFor.current === key) return;
     if (api.state === "streaming" || api.state === "connecting") return;
+    if (cameraAccessError) {
+      setPreviewActive(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -142,6 +147,7 @@ export function CameraPage({
     // We intentionally re-run when these settings change.
   }, [
     api,
+    cameraAccessError,
     settings.preferredFacingMode,
     settings.preferredDeviceId,
     settings.resolution,
@@ -161,6 +167,10 @@ export function CameraPage({
       );
       return;
     }
+    if (cameraAccessError) {
+      setPermissionError(cameraAccessError);
+      return;
+    }
     setPermissionError(null);
     try {
       await api.start({
@@ -177,7 +187,7 @@ export function CameraPage({
     } catch (err) {
       setPermissionError((err as Error)?.message ?? "Failed to start stream");
     }
-  }, [api, settings]);
+  }, [api, cameraAccessError, settings]);
 
   const isStreaming = api.state === "streaming";
   const isBusy =
@@ -238,6 +248,35 @@ export function CameraPage({
     <div className="camera-page">
       <Header live={isStreaming} />
 
+      {cameraAccessError && (
+        <section className="camera-callout" role="alert" aria-live="polite">
+          <div className="camera-callout__title">
+            <AlertTriangle size={18} />
+            Camera access needs HTTPS or localhost
+          </div>
+          <p>
+            Browser camera access requires a secure context. Opening this app
+            from <code>http://&lt;LAN-IP&gt;:5173</code> will not prompt for
+            camera permission on most mobile browsers.
+          </p>
+          <ul>
+            <li>
+              Run <code>npm run dev:https</code> and open{" "}
+              <code>https://&lt;LAN-IP&gt;:5173</code> on the phone.
+            </li>
+            <li>
+              For Chrome Android testing, add the HTTP LAN origin in{" "}
+              <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>{" "}
+              and relaunch Chrome.
+            </li>
+            <li>
+              Or put a local TLS reverse proxy such as Caddy, nginx, or mkcert
+              in front of the Vite dev server.
+            </li>
+          </ul>
+        </section>
+      )}
+
       <div className={`videoframe ${isStreaming ? "videoframe--live" : ""}`}>
         <video
           ref={videoRef}
@@ -246,16 +285,16 @@ export function CameraPage({
           playsInline
           muted
         />
-        {!previewActive && !permissionError && (
+        {!previewActive && !permissionError && !cameraAccessError && (
           <div className="videoframe__placeholder">
             <Video size={32} strokeWidth={1.5} />
             <span>Requesting camera…</span>
           </div>
         )}
-        {permissionError && (
+        {(permissionError || cameraAccessError) && (
           <div className="videoframe__placeholder videoframe__placeholder--error">
             <AlertTriangle size={26} strokeWidth={1.75} />
-            <span>{permissionError}</span>
+            <span>{permissionError ?? cameraAccessError}</span>
           </div>
         )}
         {badge && (
@@ -309,6 +348,11 @@ export function CameraPage({
           className={`record ${isStreaming ? "record--on" : ""} ${isBusy ? "record--busy" : ""}`}
           onClick={handleRecordToggle}
           aria-pressed={isStreaming}
+          disabled={Boolean(cameraAccessError)}
+          title={
+            cameraAccessError ??
+            (isStreaming ? "Stop streaming" : "Start streaming")
+          }
         >
           <span className="record__ring" aria-hidden="true" />
           <span className="record__icon">

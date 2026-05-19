@@ -11,6 +11,29 @@ import {
   type ConnectionState,
 } from "./signaling-client";
 
+const INSECURE_CAMERA_ORIGIN_MESSAGE =
+  "Camera access is blocked because this page is not a secure context. Browser camera access requires HTTPS or localhost; http://<LAN-IP> will not prompt for camera permission on most mobile browsers.";
+
+export function getCameraAccessErrorMessage(): string | null {
+  if (typeof navigator === "undefined") {
+    return "Camera APIs are unavailable in this browser.";
+  }
+
+  const mediaDevices = navigator.mediaDevices;
+  const hasGetUserMedia =
+    Boolean(mediaDevices) && typeof mediaDevices.getUserMedia === "function";
+
+  if (!hasGetUserMedia && typeof window !== "undefined" && !window.isSecureContext) {
+    return INSECURE_CAMERA_ORIGIN_MESSAGE;
+  }
+
+  if (!hasGetUserMedia) {
+    return "Camera APIs are unavailable in this browser. Use a browser/device that supports navigator.mediaDevices.getUserMedia.";
+  }
+
+  return null;
+}
+
 export interface StartParams {
   receiverUrl: string;
   pairingCode: string;
@@ -33,6 +56,7 @@ export interface CameraStreamApi {
   torchSupported: boolean;
   torchOn: boolean;
   sessionId: string | null;
+  cameraAccessError: string | null;
   start(params: StartParams): Promise<void>;
   stop(): Promise<void>;
   toggleTorch(): Promise<void>;
@@ -64,6 +88,9 @@ export function useCameraStream(): CameraStreamApi {
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [cameraAccessError] = useState<string | null>(() =>
+    getCameraAccessErrorMessage(),
+  );
 
   const streamRef = useRef<MediaStream | null>(null);
   const peerRef = useRef<CameraPeer | null>(null);
@@ -71,6 +98,12 @@ export function useCameraStream(): CameraStreamApi {
   const statsIntervalRef = useRef<number | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const startParamsRef = useRef<StartParams | null>(null);
+
+  useEffect(() => {
+    if (!cameraAccessError) return;
+    setError(cameraAccessError);
+    setState("error");
+  }, [cameraAccessError]);
 
   const refreshTrackInfo = useCallback((s: MediaStream | null) => {
     const track = s?.getVideoTracks()?.[0] ?? null;
@@ -120,6 +153,14 @@ export function useCameraStream(): CameraStreamApi {
       frameRate: FrameRate;
       audioEnabled: boolean;
     }): Promise<MediaStream> => {
+      const unsupportedReason =
+        cameraAccessError ?? getCameraAccessErrorMessage();
+      if (unsupportedReason) {
+        setError(unsupportedReason);
+        setState("error");
+        throw new Error(unsupportedReason);
+      }
+
       releasePreview();
       const video = buildVideoConstraints({
         facingMode: opts.facingMode,
@@ -139,6 +180,7 @@ export function useCameraStream(): CameraStreamApi {
         media = await navigator.mediaDevices.getUserMedia({ video, audio });
       } catch (err) {
         setError((err as Error)?.message ?? "Could not access camera");
+        setState("error");
         throw err;
       }
       streamRef.current = media;
@@ -146,7 +188,7 @@ export function useCameraStream(): CameraStreamApi {
       refreshTrackInfo(media);
       return media;
     },
-    [releasePreview, refreshTrackInfo],
+    [cameraAccessError, releasePreview, refreshTrackInfo],
   );
 
   const stop = useCallback(async (): Promise<void> => {
@@ -225,6 +267,14 @@ export function useCameraStream(): CameraStreamApi {
   const start = useCallback(
     async (params: StartParams): Promise<void> => {
       setError(null);
+      const unsupportedReason =
+        cameraAccessError ?? getCameraAccessErrorMessage();
+      if (unsupportedReason) {
+        setError(unsupportedReason);
+        setState("error");
+        throw new Error(unsupportedReason);
+      }
+
       startParamsRef.current = params;
 
       let media = streamRef.current;
@@ -340,7 +390,7 @@ export function useCameraStream(): CameraStreamApi {
       signalingRef.current = client;
       client.connect();
     },
-    [acquirePreview, stop, torchSupported],
+    [acquirePreview, cameraAccessError, stop, torchSupported],
   );
 
   // Cleanup on unmount.
@@ -374,6 +424,7 @@ export function useCameraStream(): CameraStreamApi {
     torchSupported,
     torchOn,
     sessionId,
+    cameraAccessError,
     start,
     stop,
     toggleTorch,

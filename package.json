@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "dev": "concurrently -k -n receiver,web -c blue,magenta \"npm:receiver\" \"npm:web\"",
+    "dev:https": "concurrently -k -n receiver,web -c blue,magenta \"npm:receiver\" \"npm:web:https\"",
     "receiver": "npm --workspace receiver run dev",
     "web": "npm --workspace web run dev",
     "build": "npm --workspace web run build && npm --workspace receiver run build",
