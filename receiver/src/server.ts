@@ -111,6 +111,13 @@ app.get("/api/cameras", (_req: Request, res: Response) => {
   res.json({ cameras: listCameras(state) });
 });
 
+if ((process.env.RECEIVER_TEST_SHUTDOWN ?? "false").toLowerCase() === "true") {
+  app.post("/__test/shutdown", (_req: Request, res: Response) => {
+    res.json({ ok: true });
+    setTimeout(() => shutdown("test-shutdown"), 10).unref();
+  });
+}
+
 app.post("/api/cameras/:id/accept", async (req: Request, res: Response) => {
   const id = req.params.id;
   const cam = setCameraStatus(state, id, "accepted");
@@ -127,6 +134,7 @@ app.post("/api/cameras/:id/accept", async (req: Request, res: Response) => {
   const delivered = signaling.sendToCamera(id, {
     type: "accepted",
     sessionId: id,
+    bridge: cam.bridge,
   });
   signaling.broadcastCameraUpdate(cam);
   res.json({ ok: true, camera: cam, delivered });

@@ -36,6 +36,7 @@ function statusDotClass(state: CameraStreamApi["state"]): string {
     case "streaming":
       return "dot dot--green";
     case "paired":
+    case "negotiating":
     case "searching":
     case "connecting":
       return "dot dot--amber";
@@ -63,6 +64,10 @@ function statusLabel(
       return receiverName
         ? `Paired with ${receiverName} — waiting for operator…`
         : "Paired — waiting for operator…";
+    case "negotiating":
+      return receiverName
+        ? `Negotiating media with ${receiverName}…`
+        : "Negotiating media…";
     case "streaming":
       return receiverName ? `Streaming to ${receiverName}` : "Streaming";
     case "error":
@@ -71,6 +76,16 @@ function statusLabel(
       return "Disconnected";
     default:
       return state;
+  }
+}
+
+function receiverTrustUrl(receiverUrl: string): string | null {
+  try {
+    const url = new URL(receiverUrl);
+    if (url.protocol !== "wss:") return null;
+    return `https://${url.host}/`;
+  } catch {
+    return null;
   }
 }
 
@@ -188,8 +203,8 @@ export function CameraPage({
   }, [api, cameraAccessError, settings]);
 
   const handleRecordToggle = useCallback(async () => {
-    if (api.state === "streaming" || api.state === "paired" ||
-        api.state === "connecting" || api.state === "searching") {
+    if (api.state === "connecting" || api.state === "searching") return;
+    if (api.state === "streaming" || api.state === "paired") {
       await api.stop();
       return;
     }
@@ -214,7 +229,18 @@ export function CameraPage({
   const isBusy =
     api.state === "connecting" ||
     api.state === "searching" ||
+    api.state === "negotiating" ||
     api.state === "paired";
+  const isConnecting =
+    api.state === "connecting" ||
+    api.state === "searching" ||
+    api.state === "negotiating";
+  const trustReceiverUrl = useMemo(
+    () => receiverTrustUrl(settings.receiverUrl),
+    [settings.receiverUrl],
+  );
+  const showSignalingHelp =
+    Boolean(api.error) && Boolean(settings.receiverUrl) && !cameraAccessError;
 
   const settingsResolution: ResolutionKey = settings.resolution;
   const liveResolutionLabel = useMemo(() => {
@@ -316,12 +342,46 @@ export function CameraPage({
               type="button"
               className="camera-callout__button"
               onClick={() => void startStreaming()}
-              disabled={Boolean(cameraAccessError)}
+              disabled={Boolean(cameraAccessError) || isConnecting}
             >
-              Allow camera and start streaming
+              {isConnecting ? "Connecting…" : "Allow camera and start streaming"}
             </button>
           </section>
         )}
+
+      {showSignalingHelp && (
+        <section className="camera-callout" role="alert" aria-live="polite">
+          <div className="camera-callout__title">
+            <AlertTriangle size={18} />
+            Receiver signaling failed
+          </div>
+          <p>
+            Attempted receiver WebSocket: <code>{settings.receiverUrl}</code>
+          </p>
+          {trustReceiverUrl && (
+            <>
+              <p>
+                iOS often rejects <code>wss://</code> with a local self-signed
+                certificate until the matching HTTPS origin has been opened and
+                trusted on the phone.
+              </p>
+              <button
+                type="button"
+                className="camera-callout__button camera-callout__button--warning"
+                onClick={() => {
+                  window.location.href = trustReceiverUrl;
+                }}
+              >
+                Trust receiver certificate
+              </button>
+              <p>
+                Opens <code>{trustReceiverUrl}</code>. Accept the certificate
+                warning, then return here and tap start again.
+              </p>
+            </>
+          )}
+        </section>
+      )}
 
       <div className={`videoframe ${isStreaming ? "videoframe--live" : ""}`}>
         <video
@@ -394,9 +454,12 @@ export function CameraPage({
           className={`record ${isStreaming ? "record--on" : ""} ${isBusy ? "record--busy" : ""}`}
           onClick={handleRecordToggle}
           aria-pressed={isStreaming}
-          disabled={Boolean(cameraAccessError)}
+          disabled={Boolean(cameraAccessError) || isConnecting}
           title={
             cameraAccessError ??
+            (isConnecting
+              ? "Connecting to receiver"
+              : null) ??
             (isStreaming ? "Stop streaming" : "Start streaming")
           }
         >
@@ -411,6 +474,8 @@ export function CameraPage({
           <span className="record__label">
             {isStreaming
               ? "Tap to Stop"
+              : api.state === "negotiating"
+                ? "Negotiating…"
               : isBusy
                 ? "Connecting…"
                 : "Tap to Record"}

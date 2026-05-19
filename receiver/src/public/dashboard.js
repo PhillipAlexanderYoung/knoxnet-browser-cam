@@ -70,6 +70,17 @@ function statusForCamera(cam) {
   return cam.status;
 }
 
+function bridgePhase(cam) {
+  if (!cam.bridge) return "";
+  if (cam.bridge.ingestStatus === "publishing") return "RTSP live";
+  if (cam.bridge.ingestStatus === "error") return `RTSP error${cam.bridge.lastError ? ": " + cam.bridge.lastError : ""}`;
+  return "RTSP allocated; waiting for WHIP media";
+}
+
+function bridgePreviewUrl(cam) {
+  return cam.bridge?.preview?.webRtcUrl || cam.bridge?.previewUrls?.webRtc || "";
+}
+
 function renderCameras() {
   const list = Array.from(state.cameras.values()).sort((a, b) =>
     a.createdAt.localeCompare(b.createdAt),
@@ -89,11 +100,12 @@ function renderCameras() {
     if (cam.capabilities?.torch) capBits.push("torch");
     const rtsp = cam.bridge?.rtspUrl
       ? `<div class="camera__rtsp">
-          <span>RTSP</span>
+          <span>${cam.bridge.ingestStatus === "publishing" ? "RTSP live" : "RTSP not live yet"}</span>
           <code>${escapeHtml(cam.bridge.rtspUrl)}</code>
           <button class="btn btn--ghost" data-action="copy-rtsp" data-id="${cam.sessionId}">Copy</button>
         </div>`
       : "";
+    const bridge = bridgePhase(cam);
     div.innerHTML = `
       <span class="${dotClass}"></span>
       <div>
@@ -102,7 +114,7 @@ function renderCameras() {
           status: ${escapeHtml(cam.status)} • session: ${escapeHtml(cam.sessionId.slice(0, 6))}
           ${cam.remoteAddress ? "• " + escapeHtml(cam.remoteAddress) : ""}
           ${capBits.length ? "• " + capBits.join(", ") : ""}
-          ${cam.bridge?.ingestStatus ? "• bridge: " + escapeHtml(cam.bridge.ingestStatus) : ""}
+          ${bridge ? "• bridge: " + escapeHtml(bridge) : ""}
         </div>
         ${rtsp}
       </div>
@@ -112,6 +124,9 @@ function renderCameras() {
           : ""}
         ${(cam.status === "accepted" || cam.status === "streaming") && !cam.bridge
           ? `<button class="btn btn--primary" data-action="view" data-id="${cam.sessionId}">View Live</button>`
+          : ""}
+        ${cam.bridge?.ingestStatus === "publishing" && bridgePreviewUrl(cam)
+          ? `<button class="btn btn--primary" data-action="bridge-preview" data-id="${cam.sessionId}">View Live</button>`
           : ""}
         <button class="btn btn--danger" data-action="remove" data-id="${cam.sessionId}">Remove</button>
       </div>
@@ -148,6 +163,10 @@ document.addEventListener("click", async (e) => {
     if (state.viewer?.sessionId === id) closeViewer();
   } else if (action === "view") {
     await openViewer(id);
+  } else if (action === "bridge-preview") {
+    const cam = state.cameras.get(id);
+    const url = bridgePreviewUrl(cam);
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
   } else if (action === "copy-rtsp") {
     const cam = state.cameras.get(id);
     if (cam?.bridge?.rtspUrl) {

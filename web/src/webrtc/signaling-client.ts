@@ -3,6 +3,7 @@ export type ConnectionState =
   | "connecting"
   | "searching"
   | "paired"
+  | "negotiating"
   | "streaming"
   | "error"
   | "disconnected";
@@ -17,13 +18,23 @@ export type CameraCapabilities = {
 
 export type IncomingMessage =
   | { type: "hello-ack"; paired: boolean; sessionId?: string; reason?: string }
-  | { type: "accepted"; sessionId: string }
+  | { type: "accepted"; sessionId: string; bridge?: BridgeAllocation }
   | { type: "rejected"; sessionId: string; reason?: string }
   | { type: "answer"; sessionId: string; sdp: RTCSessionDescriptionInit }
   | { type: "ice"; sessionId: string; candidate: RTCIceCandidateInit | null }
   | { type: "bye"; sessionId: string }
   | { type: "error"; message: string }
   | { type: "pong" };
+
+export interface BridgeAllocation {
+  cameraId: string;
+  name: string;
+  path: string;
+  rtspUrl: string;
+  whipUrl?: string;
+  ingestStatus?: "allocated" | "publishing" | "error";
+  lastError?: string;
+}
 
 export type OutgoingMessage =
   | {
@@ -44,10 +55,23 @@ export type OutgoingMessage =
   | { type: "bye"; sessionId: string }
   | { type: "ping" };
 
+export interface SignalingStateDetail {
+  url: string;
+  eventType?: string;
+  message?: string;
+  code?: number;
+  reason?: string;
+  wasClean?: boolean;
+  closedByClient?: boolean;
+}
+
 export interface SignalingClientOptions {
   url: string;
   onMessage: (msg: IncomingMessage) => void;
-  onStateChange: (state: "connecting" | "open" | "closed" | "error") => void;
+  onStateChange: (
+    state: "connecting" | "open" | "closed" | "error",
+    detail?: SignalingStateDetail,
+  ) => void;
   onLog?: (...args: unknown[]) => void;
 }
 
@@ -68,23 +92,40 @@ export class SignalingClient {
 
   connect(): void {
     this.closedByUs = false;
-    this.onStateChange("connecting");
+    this.onStateChange("connecting", { url: this.url });
     let ws: WebSocket;
     try {
       ws = new WebSocket(this.url);
     } catch (err) {
       this.onLog("ws ctor failed", err);
-      this.onStateChange("error");
+      this.onStateChange("error", {
+        url: this.url,
+        message: (err as Error)?.message ?? "WebSocket constructor failed",
+      });
       return;
     }
     this.ws = ws;
-    ws.onopen = () => this.onStateChange("open");
+    ws.onopen = () => this.onStateChange("open", { url: this.url });
     ws.onerror = (ev) => {
       this.onLog("ws error", ev);
-      this.onStateChange("error");
+      this.onStateChange("error", {
+        url: this.url,
+        eventType: ev.type,
+        message:
+          "message" in ev && typeof ev.message === "string"
+            ? ev.message
+            : undefined,
+      });
     };
-    ws.onclose = () => {
-      this.onStateChange("closed");
+    ws.onclose = (ev) => {
+      this.onStateChange("closed", {
+        url: this.url,
+        eventType: ev.type,
+        code: ev.code,
+        reason: ev.reason,
+        wasClean: ev.wasClean,
+        closedByClient: this.closedByUs,
+      });
       this.ws = null;
     };
     ws.onmessage = (ev) => {

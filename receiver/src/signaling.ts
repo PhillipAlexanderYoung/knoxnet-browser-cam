@@ -10,7 +10,7 @@ import {
   type CameraRecord,
   type PairingState,
 } from "./pairing.js";
-import type { BridgeClient } from "./bridge-client.js";
+import type { BridgeAllocation, BridgeClient } from "./bridge-client.js";
 
 // Message envelopes traveling over the signaling WebSocket.
 // Kept loose on intent (role-specific shape) but typed at the union level.
@@ -29,7 +29,7 @@ export type SignalingMessage =
       sessionId?: string;
     }
   | { type: "hello-ack"; paired: boolean; sessionId?: string; reason?: string }
-  | { type: "accepted"; sessionId: string }
+  | { type: "accepted"; sessionId: string; bridge?: BridgeAllocation }
   | { type: "rejected"; sessionId: string; reason?: string }
   | { type: "offer"; sessionId: string; sdp: RTCSessionDescriptionInit }
   | { type: "answer"; sessionId: string; sdp: RTCSessionDescriptionInit }
@@ -122,6 +122,10 @@ export function attachSignaling(
     }
   }
 
+  function applyBridgeUpdate(cam: CameraRecord, bridge?: BridgeAllocation): void {
+    if (bridge) cam.bridge = bridge;
+  }
+
   function detach(ws: WebSocket): void {
     const ctx = clients.get(ws);
     if (!ctx) return;
@@ -194,7 +198,7 @@ export function attachSignaling(
             updated.bridge = allocation;
           }
         }
-        send(ws, { type: "accepted", sessionId: cam.sessionId });
+        send(ws, { type: "accepted", sessionId: cam.sessionId, bridge: updated.bridge });
         broadcastCameraUpdate(updated);
       }
     }
@@ -295,23 +299,57 @@ export function attachSignaling(
             }
             if (bridgeClient && cam.bridge) {
               if (msg.type === "offer" && msg.sdp?.sdp) {
-                void bridgeClient?.publishOffer(cam, msg.sdp.sdp).then((answer) => {
-                  if (!answer) {
+                log(
+                  `offer received sessionId=${targetSession}; requesting bridge WHIP path=${cam.bridge.path}`,
+                );
+                const negotiating = setCameraStatus(state, targetSession, "negotiating");
+                if (negotiating) broadcastCameraUpdate(negotiating);
+                void bridgeClient.publishOffer(cam, msg.sdp.sdp).then((result) => {
+                  applyBridgeUpdate(cam, result.camera);
+                  if (!result.answer) {
+                    const error =
+                      result.error ?? "bridge WHIP ingest failed; RTSP stream not available";
                     const updated = setCameraStatus(state, targetSession, "accepted");
-                    if (updated) broadcastCameraUpdate(updated);
+                    if (updated) {
+                      applyBridgeUpdate(updated, result.camera);
+                      if (updated.bridge) {
+                        updated.bridge.ingestStatus = "error";
+                        updated.bridge.lastError = error;
+                      }
+                      broadcastCameraUpdate(updated);
+                    }
+                    log(`bridge WHIP failed sessionId=${targetSession}: ${error}`);
                     send(ws, {
                       type: "error",
-                      message: "bridge WHIP ingest failed; RTSP stream not available",
+                      message: error,
                     });
                     return;
                   }
+                  log(`bridge WHIP answer returned sessionId=${targetSession}`);
                   send(ws, {
                     type: "answer",
                     sessionId: targetSession,
-                    sdp: answer,
+                    sdp: result.answer,
                   });
                   const updated = setCameraStatus(state, targetSession, "streaming");
+                  if (updated) {
+                    applyBridgeUpdate(updated, result.camera);
+                    broadcastCameraUpdate(updated);
+                  }
+                  log(`stream connected sessionId=${targetSession} rtsp=${cam.bridge?.rtspUrl}`);
+                }).catch((err) => {
+                  const error = (err as Error)?.message ?? String(err);
+                  const updated = setCameraStatus(state, targetSession, "accepted");
+                  if (updated?.bridge) {
+                    updated.bridge.ingestStatus = "error";
+                    updated.bridge.lastError = error;
+                  }
                   if (updated) broadcastCameraUpdate(updated);
+                  log(`bridge WHIP error sessionId=${targetSession}: ${error}`);
+                  send(ws, {
+                    type: "error",
+                    message: `bridge WHIP ingest failed: ${error}`,
+                  });
                 });
               }
               if (msg.type === "ice") {
@@ -321,8 +359,14 @@ export function attachSignaling(
               return;
             }
             if (msg.type === "offer") {
-              const updated = setCameraStatus(state, targetSession, "streaming");
+              log(`offer received sessionId=${targetSession}; forwarding to dashboard viewers`);
+              const updated = setCameraStatus(state, targetSession, "negotiating");
               if (updated) broadcastCameraUpdate(updated);
+            }
+            if (msg.type === "bye") {
+              const updated = setCameraStatus(state, targetSession, "accepted");
+              if (updated) broadcastCameraUpdate(updated);
+              log(`stream disconnected sessionId=${targetSession}`);
             }
             forwardToViewers(targetSession, msg);
             return;
@@ -330,6 +374,14 @@ export function attachSignaling(
 
           // Viewers always forward to the camera socket.
           if (ctx.role === "viewer") {
+            if (msg.type === "answer") {
+              const updated = setCameraStatus(state, targetSession, "streaming");
+              if (updated) broadcastCameraUpdate(updated);
+              log(`dashboard answer forwarded sessionId=${targetSession}`);
+            }
+            if (msg.type === "ice") {
+              log(`dashboard ICE forwarded sessionId=${targetSession}`);
+            }
             forwardToCamera(targetSession, msg);
             return;
           }

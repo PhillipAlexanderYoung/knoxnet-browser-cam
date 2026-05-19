@@ -75,13 +75,26 @@ https://<lan-ip>:8787/
 ```
 
 The browser may warn about the local self-signed certificate. Accept it for the
-desktop dashboard and for the phone app origin. This is local dev TLS only.
+desktop dashboard and for the phone app origin. On iPhone, also open
+`https://<lan-ip>:8787/` in Safari once and accept the receiver certificate
+before scanning the QR; otherwise Safari may allow the camera app on `:5173`
+while still rejecting the `wss://<lan-ip>:8787/ws` signaling upgrade. This is
+local dev TLS only.
 Before scanning, you can confirm that the QR points at the phone app, not the
 dashboard:
 
 ```bash
 curl -k https://<lan-ip>:8787/api/info | jq .phonePairingUrl
 ```
+
+You can smoke-test the receiver's local HTTPS/WSS upgrade from the desktop with:
+
+```bash
+npm run test:wss
+```
+
+The test starts a temporary WSS receiver on a high localhost port. Set
+`WSS_SMOKE_PORT=18878` first if you want to force a specific port.
 
 For a receiver + web app without the RTSP bridge:
 
@@ -132,10 +145,12 @@ Use that address as `<lan-ip>` everywhere below.
    from the dashboard URL.
 2. **On iPhone:** scan the dashboard QR with the native Camera app. It opens
    `https://<lan-ip>:5173/?receiver=wss://<lan-ip>:8787/ws&pair=<code>&autostart=1`.
-3. **Phone:** accept the local certificate if prompted, then allow camera
-   permission. The app fills the receiver URL and pairing code automatically and
-   tries to start streaming. If iOS requires a user gesture, tap
-   **Allow camera and start streaming**.
+3. **Phone:** before or after scanning, open `https://<lan-ip>:8787/` in Safari
+   and accept the local receiver certificate. Then open/return to the QR URL,
+   accept the phone app certificate if prompted, and allow camera permission.
+   The app fills the receiver URL and pairing code automatically and tries to
+   start streaming. If iOS requires a user gesture, tap **Allow camera and start
+   streaming**.
 4. **Desktop dashboard:** click **Accept** on the pending camera. With
    `npm run dev:all`, the receiver already has
    `BRIDGE_URL=http://localhost:8790`, so it allocates a MediaMTX path and shows
@@ -240,6 +255,7 @@ front both ports with a single HTTPS origin. Out of scope here; see Caddy's
 | `npm run web`      | Just the Vite dev server on `:5173`.                                        |
 | `npm run build`    | `tsc --noEmit` + `vite build` for `web/`; `tsc -p` + static-copy for receiver. |
 | `npm run test:urls`| Checks receiver URL builders so QR pairing stays on the phone app origin.   |
+| `npm run test:wss` | Starts a temporary TLS receiver and verifies the localhost WSS upgrade accepts `hello`. |
 | `npm run typecheck`| Type-check both workspaces without emitting.                                |
 | `npm start`        | Runs the compiled receiver from `receiver/dist`.                            |
 

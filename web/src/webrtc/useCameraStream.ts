@@ -9,6 +9,7 @@ import {
   SignalingClient,
   type CameraCapabilities,
   type ConnectionState,
+  type SignalingStateDetail,
 } from "./signaling-client";
 
 const INSECURE_CAMERA_ORIGIN_MESSAGE =
@@ -32,6 +33,40 @@ export function getCameraAccessErrorMessage(): string | null {
   }
 
   return null;
+}
+
+function receiverTrustUrl(receiverUrl: string): string | null {
+  try {
+    const url = new URL(receiverUrl);
+    if (url.protocol !== "wss:") return null;
+    return `https://${url.host}/`;
+  } catch {
+    return null;
+  }
+}
+
+function describeSignalingFailure(
+  receiverUrl: string,
+  detail?: SignalingStateDetail,
+): string {
+  const parts = [`Signaling connection failed for ${receiverUrl}.`];
+  const details: string[] = [];
+  if (detail?.code != null) details.push(`close code ${detail.code}`);
+  if (detail?.reason) details.push(`reason "${detail.reason}"`);
+  if (detail?.wasClean != null) {
+    details.push(detail.wasClean ? "clean close" : "unclean close");
+  }
+  if (detail?.message) details.push(detail.message);
+  if (details.length > 0) {
+    parts.push(`Details: ${details.join(", ")}.`);
+  }
+  const trustUrl = receiverTrustUrl(receiverUrl);
+  if (trustUrl) {
+    parts.push(
+      `If this receiver uses the local self-signed dev certificate, open ${trustUrl} on this iPhone once and accept the certificate, then return here and start streaming again.`,
+    );
+  }
+  return parts.join(" ");
 }
 
 export interface StartParams {
@@ -96,6 +131,7 @@ export function useCameraStream(): CameraStreamApi {
   const peerRef = useRef<CameraPeer | null>(null);
   const signalingRef = useRef<SignalingClient | null>(null);
   const statsIntervalRef = useRef<number | null>(null);
+  const negotiationTimeoutRef = useRef<number | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const startParamsRef = useRef<StartParams | null>(null);
 
@@ -192,6 +228,10 @@ export function useCameraStream(): CameraStreamApi {
   );
 
   const stop = useCallback(async (): Promise<void> => {
+    if (negotiationTimeoutRef.current != null) {
+      window.clearTimeout(negotiationTimeoutRef.current);
+      negotiationTimeoutRef.current = null;
+    }
     if (statsIntervalRef.current != null) {
       window.clearInterval(statsIntervalRef.current);
       statsIntervalRef.current = null;
@@ -303,7 +343,7 @@ export function useCameraStream(): CameraStreamApi {
       setState("connecting");
       const client = new SignalingClient({
         url: params.receiverUrl,
-        onStateChange: (s) => {
+        onStateChange: (s, detail) => {
           if (s === "open") {
             setState("searching");
             client.send({
@@ -314,9 +354,16 @@ export function useCameraStream(): CameraStreamApi {
               capabilities: caps,
             });
           } else if (s === "closed") {
-            setState((prev) => (prev === "idle" ? "idle" : "disconnected"));
+            if (!detail?.closedByClient && detail?.code === 1006) {
+              setError(describeSignalingFailure(params.receiverUrl, detail));
+              setState("error");
+              return;
+            }
+            setState((prev) =>
+              prev === "idle" || prev === "error" ? prev : "disconnected",
+            );
           } else if (s === "error") {
-            setError("Signaling connection failed");
+            setError(describeSignalingFailure(params.receiverUrl, detail));
             setState("error");
           }
         },
@@ -336,6 +383,16 @@ export function useCameraStream(): CameraStreamApi {
           } else if (msg.type === "accepted") {
             sessionIdRef.current = msg.sessionId;
             setSessionId(msg.sessionId);
+            setState("negotiating");
+            if (negotiationTimeoutRef.current != null) {
+              window.clearTimeout(negotiationTimeoutRef.current);
+            }
+            negotiationTimeoutRef.current = window.setTimeout(() => {
+              setError(
+                "WebRTC negotiation timed out. Check receiver bridge logs and MediaMTX health; RTSP is not live until WHIP publish succeeds.",
+              );
+              setState("error");
+            }, 20_000);
             const peer = new CameraPeer({
               sessionId: msg.sessionId,
               signaling: client,
@@ -343,7 +400,13 @@ export function useCameraStream(): CameraStreamApi {
               maxBitrateKbps: params.maxBitrateKbps,
               onConnectionStateChange: (pcState) => {
                 if (pcState === "connected") {
+                  if (negotiationTimeoutRef.current != null) {
+                    window.clearTimeout(negotiationTimeoutRef.current);
+                    negotiationTimeoutRef.current = null;
+                  }
                   setState("streaming");
+                } else if (pcState === "connecting") {
+                  setState("negotiating");
                 } else if (pcState === "failed") {
                   setError("WebRTC connection failed");
                   setState("error");
@@ -373,6 +436,10 @@ export function useCameraStream(): CameraStreamApi {
             setState("error");
             await stop();
           } else if (msg.type === "answer") {
+            if (negotiationTimeoutRef.current != null) {
+              window.clearTimeout(negotiationTimeoutRef.current);
+              negotiationTimeoutRef.current = null;
+            }
             await peerRef.current?.acceptAnswer(msg.sdp);
           } else if (msg.type === "ice") {
             await peerRef.current?.addRemoteIce(msg.candidate);
@@ -380,6 +447,7 @@ export function useCameraStream(): CameraStreamApi {
             await stop();
           } else if (msg.type === "error") {
             setError(msg.message);
+            setState("error");
           }
         },
         onLog: (...args) => {
@@ -398,6 +466,9 @@ export function useCameraStream(): CameraStreamApi {
     return () => {
       if (statsIntervalRef.current != null) {
         window.clearInterval(statsIntervalRef.current);
+      }
+      if (negotiationTimeoutRef.current != null) {
+        window.clearTimeout(negotiationTimeoutRef.current);
       }
       peerRef.current?.destroy();
       signalingRef.current?.close();

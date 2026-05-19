@@ -21,6 +21,7 @@
     "web:https": "npm --workspace web run dev:https",
     "build": "npm --workspace web run build && npm --workspace receiver run build && npm --workspace bridge run build",
     "test:urls": "npm --workspace receiver run test:urls",
+    "test:wss": "npm --workspace receiver run test:wss",
     "typecheck": "npm --workspace web run typecheck && npm --workspace receiver run typecheck && npm --workspace bridge run typecheck",
     "start": "npm --workspace receiver run start"
   },

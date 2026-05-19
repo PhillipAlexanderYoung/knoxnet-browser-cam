@@ -10,6 +10,7 @@ const generateSessionId = customAlphabet(
 export type CameraStatus =
   | "pending"
   | "accepted"
+  | "negotiating"
   | "streaming"
   | "disconnected";
 

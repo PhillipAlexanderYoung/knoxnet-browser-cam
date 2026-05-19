@@ -10,12 +10,18 @@ export interface BridgeAllocation {
   lastError?: string;
 }
 
+export interface BridgePublishResult {
+  answer?: { type: "answer"; sdp: string };
+  camera?: BridgeAllocation;
+  error?: string;
+}
+
 export interface BridgeClient {
   allocateCamera: (camera: CameraRecord) => Promise<BridgeAllocation | null>;
   publishOffer: (
     camera: CameraRecord,
     offerSdp: string,
-  ) => Promise<{ type: "answer"; sdp: string } | null>;
+  ) => Promise<BridgePublishResult>;
   removeCamera: (cameraId: string) => Promise<void>;
 }
 
@@ -29,24 +35,31 @@ export function createBridgeClient(
   async function requestJson<T>(
     path: string,
     init: RequestInit,
-  ): Promise<T | null> {
+  ): Promise<{ ok: boolean; status: number; body: T | null; error?: string }> {
     try {
       const res = await fetch(`${baseUrl}${path}`, init);
-      const body = (await res.json()) as T & { error?: string; detail?: string };
+      const text = await res.text();
+      const body = text
+        ? (JSON.parse(text) as T & { error?: string; detail?: string })
+        : null;
       if (!res.ok) {
-        log("bridge request failed", path, res.status, body.error, body.detail);
-        return null;
+        const error =
+          [body?.error, body?.detail].filter(Boolean).join(": ") ||
+          `bridge-http-${res.status}`;
+        log("bridge request failed", path, res.status, error);
+        return { ok: false, status: res.status, body, error };
       }
-      return body;
+      return { ok: true, status: res.status, body };
     } catch (err) {
-      log("bridge request error", path, err);
-      return null;
+      const error = (err as Error)?.message ?? String(err);
+      log("bridge request error", path, error);
+      return { ok: false, status: 0, body: null, error };
     }
   }
 
   return {
     async allocateCamera(camera) {
-      const body = await requestJson<{ ok: boolean; camera: BridgeAllocation }>(
+      const result = await requestJson<{ ok: boolean; camera: BridgeAllocation }>(
         "/api/cameras",
         {
           method: "POST",
@@ -58,11 +71,11 @@ export function createBridgeClient(
           }),
         },
       );
-      return body?.camera ?? null;
+      return result.ok ? (result.body?.camera ?? null) : null;
     },
 
     async publishOffer(camera, offerSdp) {
-      const body = await requestJson<{
+      const result = await requestJson<{
         ok: boolean;
         sdp: { type: "answer"; sdp: string };
         camera?: BridgeAllocation;
@@ -71,10 +84,14 @@ export function createBridgeClient(
         headers: { "Content-Type": "application/sdp", Accept: "application/json" },
         body: offerSdp,
       });
-      if (body?.camera) {
-        camera.bridge = body.camera;
+      if (result.body?.camera) {
+        camera.bridge = result.body.camera;
       }
-      return body?.sdp ?? null;
+      return {
+        answer: result.ok ? result.body?.sdp : undefined,
+        camera: result.body?.camera,
+        error: result.ok ? undefined : result.error,
+      };
     },
 
     async removeCamera(cameraId) {
