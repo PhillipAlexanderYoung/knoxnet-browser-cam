@@ -27,6 +27,7 @@ export interface ReceiverInfo {
   wsPath: string;
   publicHost: string;
   pairingCode: string;
+  phonePairingUrl?: string;
   pairingUrl: string;
   dashboardUrl?: string;
   receiverWsUrl?: string;

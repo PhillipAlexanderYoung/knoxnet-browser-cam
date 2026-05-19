@@ -76,11 +76,23 @@ https://<lan-ip>:8787/
 
 The browser may warn about the local self-signed certificate. Accept it for the
 desktop dashboard and for the phone app origin. This is local dev TLS only.
+Before scanning, you can confirm that the QR points at the phone app, not the
+dashboard:
+
+```bash
+curl -k https://<lan-ip>:8787/api/info | jq .phonePairingUrl
+```
 
 For a receiver + web app without the RTSP bridge:
 
 ```bash
 npm run dev:https
+```
+
+For just the receiver with phone-friendly HTTPS/WSS URL defaults:
+
+```bash
+npm run receiver:dev-phone
 ```
 
 For desktop-only HTTP testing:
@@ -223,9 +235,11 @@ front both ports with a single HTTPS origin. Out of scope here; see Caddy's
 | `npm run bridge`   | Just the bridge (`tsx watch src/server.ts`).                                |
 | `npm run dev:bridge` | Alias for the bridge dev server.                                          |
 | `npm run dev:https`| Runs WSS receiver and HTTPS Vite app without the RTSP bridge.                |
-| `npm run receiver` | Just the receiver (`tsx watch src/server.ts`).                              |
+| `npm run receiver:dev-phone` | Just the WSS receiver with phone-app URL defaults for `https://<lan-ip>:5173`. |
+| `npm run receiver` | Just the receiver (`tsx watch src/server.ts`); set `PHONE_APP_URL` if the phone app is not on the default derived origin. |
 | `npm run web`      | Just the Vite dev server on `:5173`.                                        |
 | `npm run build`    | `tsc --noEmit` + `vite build` for `web/`; `tsc -p` + static-copy for receiver. |
+| `npm run test:urls`| Checks receiver URL builders so QR pairing stays on the phone app origin.   |
 | `npm run typecheck`| Type-check both workspaces without emitting.                                |
 | `npm start`        | Runs the compiled receiver from `receiver/dist`.                            |
 

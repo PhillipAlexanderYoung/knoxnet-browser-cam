@@ -103,7 +103,7 @@ body {
   justify-content: space-between;
 }
 
-.pairing { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: center; }
+.pairing { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 18px; align-items: center; }
 .pairing__code {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 28px;
@@ -126,6 +126,11 @@ body {
 .pairing__url--dashboard {
   color: var(--text-muted);
 }
+.pairing__url--qr {
+  margin-top: 6px;
+  max-width: 180px;
+  font-size: 10px;
+}
 .pairing__hint {
   font-size: 11px;
   line-height: 1.45;
@@ -143,6 +148,9 @@ body {
   border-radius: 12px;
   border: 1px solid var(--border);
   background: #fff;
+}
+.pairing__qr .caps {
+  margin-top: 10px;
 }
 
 .btn {

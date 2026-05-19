@@ -31,26 +31,34 @@ async function fetchInfo() {
 function renderInfo(info) {
   state.info = info;
   state.pairingCode = info.pairingCode;
-  el("receiver-name").textContent = `${info.name} • ${info.dashboardUrl ?? `${info.tls ? "https" : "http"}://${info.publicHost}:${info.httpPort}/`}`;
+  const phonePairingUrl = info.phonePairingUrl ?? info.pairingUrl;
+  const receiverDashboardUrl =
+    info.dashboardUrl ?? `${info.tls ? "https" : "http"}://${info.publicHost}:${info.httpPort}/`;
+  el("receiver-name").textContent = `${info.name} • ${receiverDashboardUrl}`;
   el("pairing-code").textContent = info.pairingCode;
-  el("pairing-url").textContent = info.pairingUrl;
+  el("pairing-url").textContent = phonePairingUrl;
   const dashboardUrl = el("dashboard-url");
   if (dashboardUrl) {
-    dashboardUrl.textContent =
-      info.dashboardUrl ?? `${info.tls ? "https" : "http"}://${info.publicHost}:${info.httpPort}/`;
+    dashboardUrl.textContent = receiverDashboardUrl;
+  }
+  const qrUrl = el("pairing-qr-url");
+  if (qrUrl) {
+    qrUrl.textContent = phonePairingUrl;
   }
   el("pairing-qr").src = `/api/pair-qr?ts=${Date.now()}`;
   const bridge = el("bridge-status");
   if (bridge) {
     bridge.textContent = info.bridgeUrl
       ? `Bridge connected: ${info.bridgeUrl}. RTSP paths appear after you accept a camera.`
-      : "RTSP bridge disabled. Restart with: BRIDGE_URL=http://localhost:8790 npm run receiver (or use npm run dev:all).";
+      : "RTSP bridge disabled. Use npm run receiver:dev-phone for phone pairing only, or npm run dev:all for the RTSP bridge too.";
   }
 }
 
 el("copy-url").addEventListener("click", async () => {
   try {
-    await navigator.clipboard.writeText(state.info?.pairingUrl ?? "");
+    await navigator.clipboard.writeText(
+      state.info?.phonePairingUrl ?? state.info?.pairingUrl ?? "",
+    );
     el("copy-url").textContent = "Copied!";
     setTimeout(() => (el("copy-url").textContent = "Copy URL"), 1200);
   } catch (e) {

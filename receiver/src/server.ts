@@ -17,6 +17,11 @@ import {
 } from "./pairing.js";
 import { createBridgeClient } from "./bridge-client.js";
 import { attachSignaling } from "./signaling.js";
+import {
+  buildReceiverUrls,
+  httpScheme,
+  type ReceiverUrlConfig,
+} from "./urls.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -46,6 +51,14 @@ const TLS_CERT_PATH =
   path.resolve(__dirname, "..", "..", ".cert", "knoxnet-dev.crt");
 
 const state = createPairingState(process.env.PAIRING_CODE);
+const urlConfig: ReceiverUrlConfig = {
+  publicHost: PUBLIC_HOST,
+  receiverPort: PORT,
+  useTls: USE_TLS,
+  phoneAppUrl: PHONE_APP_URL,
+  phoneAppScheme: PHONE_APP_SCHEME,
+  phoneAppPort: PHONE_APP_PORT,
+};
 
 function log(...args: unknown[]): void {
   // eslint-disable-next-line no-console
@@ -64,34 +77,8 @@ function detectLanIp(): string | undefined {
   return undefined;
 }
 
-function httpScheme(): "http" | "https" {
-  return USE_TLS ? "https" : "http";
-}
-
-function wsScheme(): "ws" | "wss" {
-  return USE_TLS ? "wss" : "ws";
-}
-
-function dashboardUrl(): string {
-  return `${httpScheme()}://${PUBLIC_HOST}:${PORT}/`;
-}
-
-function receiverWsUrl(): string {
-  return `${wsScheme()}://${PUBLIC_HOST}:${PORT}/ws`;
-}
-
-function phoneAppUrl(): string {
-  if (PHONE_APP_URL) return PHONE_APP_URL;
-  return `${PHONE_APP_SCHEME}://${PUBLIC_HOST}:${PHONE_APP_PORT}`;
-}
-
-function pairingUrl(): string {
-  const url = new URL(phoneAppUrl());
-  // The frontend reads these on load and autostarts as far as the browser allows.
-  url.searchParams.set("receiver", receiverWsUrl());
-  url.searchParams.set("pair", state.code);
-  url.searchParams.set("autostart", "1");
-  return url.toString();
+function receiverUrls() {
+  return buildReceiverUrls(urlConfig, state.code);
 }
 
 const app = express();
@@ -100,6 +87,7 @@ app.use(express.json({ limit: "256kb" }));
 const bridgeClient = createBridgeClient(BRIDGE_URL, log);
 
 app.get("/api/info", (_req: Request, res: Response) => {
+  const urls = receiverUrls();
   res.json({
     ok: true,
     name: RECEIVER_NAME,
@@ -107,10 +95,11 @@ app.get("/api/info", (_req: Request, res: Response) => {
     wsPath: "/ws",
     publicHost: PUBLIC_HOST,
     pairingCode: state.code,
-    pairingUrl: pairingUrl(),
-    dashboardUrl: dashboardUrl(),
-    receiverWsUrl: receiverWsUrl(),
-    phoneAppUrl: phoneAppUrl(),
+    phonePairingUrl: urls.phonePairingUrl,
+    pairingUrl: urls.phonePairingUrl,
+    dashboardUrl: urls.dashboardUrl,
+    receiverWsUrl: urls.receiverWsUrl,
+    phoneAppUrl: urls.phoneAppUrl,
     autoAccept: AUTO_ACCEPT,
     bridgeUrl: BRIDGE_URL,
     tls: USE_TLS,
@@ -156,7 +145,7 @@ app.delete("/api/cameras/:id", async (req: Request, res: Response) => {
 
 app.get("/api/pair-qr", async (_req: Request, res: Response) => {
   try {
-    const png = await qrcode.toBuffer(pairingUrl(), {
+    const png = await qrcode.toBuffer(receiverUrls().phonePairingUrl, {
       type: "png",
       margin: 1,
       width: 320,
@@ -206,25 +195,25 @@ const signaling = attachSignaling(wss, {
 });
 
 httpServer.listen(PORT, HOST, () => {
-  const url = pairingUrl();
-  log(`Knoxnet browser-cam receiver listening on ${httpScheme()}://${HOST}:${PORT}`);
-  log(`WebSocket signaling at ${receiverWsUrl()}`);
+  const urls = receiverUrls();
+  log(`Knoxnet browser-cam receiver listening on ${httpScheme(USE_TLS)}://${HOST}:${PORT}`);
+  log(`WebSocket signaling at ${urls.receiverWsUrl}`);
   log(`Pairing code (one-time print): ${state.code}`);
-  log(`Phone app URL: ${phoneAppUrl()}`);
-  log(`Pairing URL: ${url}`);
+  log(`Phone app URL: ${urls.phoneAppUrl}`);
+  log(`Phone pairing URL: ${urls.phonePairingUrl}`);
   log(`Scan this URL with the iPhone Camera app to open the phone app.`);
   if (AUTO_ACCEPT) log("AUTO_ACCEPT=true: cameras will be auto-accepted on hello.");
-  log(`Dashboard:    ${dashboardUrl()}`);
+  log(`Dashboard:    ${urls.dashboardUrl}`);
   if (BRIDGE_URL) {
     log(`Bridge API:   ${BRIDGE_URL} (RTSP paths appear after accept)`);
   } else {
-    log("Bridge API:   disabled. Restart with BRIDGE_URL=http://localhost:8790 npm run receiver, or use npm run dev:all.");
+    log("Bridge API:   disabled. Restart with npm run receiver:dev-phone, or use npm run dev:all for the RTSP bridge too.");
   }
   log(`From now on, the pairing code is redacted: ${redactCode(state.code)}`);
 
   // Also emit a textual QR to the console for convenience.
   qrcode
-    .toString(url, { type: "terminal", small: true })
+    .toString(urls.phonePairingUrl, { type: "terminal", small: true })
     .then((ascii) => {
       log("Scan this QR with the phone camera:\n" + ascii);
     })
