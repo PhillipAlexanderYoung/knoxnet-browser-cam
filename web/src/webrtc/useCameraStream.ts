@@ -245,6 +245,8 @@ export function useCameraStream(): CameraStreamApi {
   const autoStableSinceRef = useRef<number | null>(null);
   const autoLastAdjustAtRef = useRef(0);
   const lastQualitySentRef = useRef("");
+  const qualityMessageRef = useRef<string | null>(null);
+  const qualityMessageUntilRef = useRef(0);
   const startOnceRef = useRef<
     (params: StartParams, opts?: { isReconnect?: boolean }) => Promise<void>
   >(async () => {});
@@ -338,6 +340,12 @@ export function useCameraStream(): CameraStreamApi {
           ? resolutionFromHeight(height)
           : effectiveResolutionRef.current;
       effectiveResolutionRef.current = currentResolution;
+      if (typeof message === "string" && message.length > 0) {
+        qualityMessageRef.current = message;
+        qualityMessageUntilRef.current = Date.now() + 12_000;
+      } else if (Date.now() > qualityMessageUntilRef.current) {
+        qualityMessageRef.current = null;
+      }
       const requestedResolution = startParamsRef.current?.resolution ?? currentResolution;
       setQuality({
         mode: requestedResolution === "auto" ? "auto" : currentResolution,
@@ -347,7 +355,7 @@ export function useCameraStream(): CameraStreamApi {
         height,
         frameRate,
         bitrateKbps: nextStats?.bitrateKbps,
-        message: message ?? null,
+        message: qualityMessageRef.current,
       });
     },
     [],
@@ -425,17 +433,51 @@ export function useCameraStream(): CameraStreamApi {
           }
         : false;
       let media: MediaStream;
+      let qualityMessage: string | null = null;
       try {
         media = await navigator.mediaDevices.getUserMedia({ video, audio });
       } catch (err) {
-        setError(
-          isCameraPermissionDeniedError(err)
-            ? CAMERA_PERMISSION_REQUIRED_MESSAGE
-            : (err as Error)?.message ?? "Could not access camera",
-        );
-        setErrorKind("camera");
-        setState("error");
-        throw err;
+        const fallback = isCameraPermissionDeniedError(err)
+          ? null
+          : nextLowerResolution(requestedResolution);
+        if (fallback) {
+          try {
+            const fallbackVideo = buildVideoConstraints({
+              facingMode: opts.facingMode,
+              deviceId: opts.deviceId,
+              resolution: fallback,
+              frameRate: opts.frameRate,
+            });
+            media = await navigator.mediaDevices.getUserMedia({
+              video: fallbackVideo,
+              audio,
+            });
+            effectiveResolutionRef.current = fallback;
+            qualityMessage =
+              opts.resolution === "auto"
+                ? `Auto adjusted to ${fallback} for stability`
+                : `Could not start ${requestedResolution}; using ${fallback} to keep the stream alive.`;
+            setError(qualityMessage);
+          } catch {
+            setError(
+              isCameraPermissionDeniedError(err)
+                ? CAMERA_PERMISSION_REQUIRED_MESSAGE
+                : (err as Error)?.message ?? "Could not access camera",
+            );
+            setErrorKind("camera");
+            setState("error");
+            throw err;
+          }
+        } else {
+          setError(
+            isCameraPermissionDeniedError(err)
+              ? CAMERA_PERMISSION_REQUIRED_MESSAGE
+              : (err as Error)?.message ?? "Could not access camera",
+          );
+          setErrorKind("camera");
+          setState("error");
+          throw err;
+        }
       }
       streamRef.current = media;
       const videoTrack = media.getVideoTracks()[0] ?? null;
@@ -451,7 +493,7 @@ export function useCameraStream(): CameraStreamApi {
       }
       setStream(media);
       refreshTrackInfo(media);
-      updateQualityFromTrack(null);
+      updateQualityFromTrack(qualityMessage);
       return media;
     },
     [cameraAccessError, releasePreview, refreshTrackInfo, updateQualityFromTrack],
@@ -477,6 +519,8 @@ export function useCameraStream(): CameraStreamApi {
     autoStableSinceRef.current = null;
     autoLastAdjustAtRef.current = 0;
     lastQualitySentRef.current = "";
+    qualityMessageRef.current = null;
+    qualityMessageUntilRef.current = 0;
     if (!opts.preserveError) {
       setError(null);
       setErrorKind(null);
@@ -612,8 +656,7 @@ export function useCameraStream(): CameraStreamApi {
           reason === "stability"
             ? `Auto adjusted to ${resolution} for stability`
             : `Auto adjusted to ${resolution}`;
-        setError(message);
-        updateQualityFromTrack(message, stats);
+        updateQualityFromTrack(message);
         return true;
       } catch (err) {
         effectiveResolutionRef.current = previousResolution;
@@ -621,7 +664,7 @@ export function useCameraStream(): CameraStreamApi {
         return false;
       }
     },
-    [refreshTrackInfo, stats, updateQualityFromTrack],
+    [refreshTrackInfo, updateQualityFromTrack],
   );
 
   const handleAutoStats = useCallback(
