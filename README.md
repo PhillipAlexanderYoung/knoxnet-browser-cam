@@ -5,6 +5,10 @@
 > just a mobile-first web app and a small Node.js receiver running on your
 > LAN.
 
+Free open source software under the Apache License 2.0. The phone web app can
+be hosted publicly as a static site, while signaling, WebRTC media, RTSP, and
+pairing stay on your local network.
+
 This repo contains:
 
 - `web/` — React + Vite + TypeScript mobile web app (the camera UI).
@@ -14,6 +18,13 @@ This repo contains:
   RTSP paths, and relays accepted browser-camera WebRTC offers into MediaMTX
   via WHIP.
 - `docs/` — security model + Knoxnet VMS integration plan.
+
+Publishing guides:
+
+- [Cloudflare Pages hosting](docs/cloudflare-pages.md) for
+  `https://cam.knoxnetvms.com`.
+- [GitHub publishing and releases](docs/github-release.md).
+- [Knoxnet VMS sidecar/plugin model](docs/knoxnet-vms-plugin.md).
 
 ## Reality constraints (read me first)
 
@@ -307,6 +318,8 @@ front both ports with a single HTTPS origin. Out of scope here; see Caddy's
 | `npm run receiver:dev-phone` | Just the WSS receiver with phone-app URL defaults for `https://<lan-ip>:5173`. |
 | `npm run receiver` | Just the receiver (`tsx watch src/server.ts`); set `PHONE_APP_URL` if the phone app is not on the default derived origin. |
 | `npm run web`      | Just the Vite dev server on `:5173`.                                        |
+| `npm run build:web`| Builds only the static phone web app into `web/dist`.                       |
+| `npm run deploy:pages` | Deploys `web/dist` to Cloudflare Pages project `knoxnet-browser-cam` without rebuilding. |
 | `npm run build`    | `tsc --noEmit` + `vite build` for `web/`; `tsc -p` + static-copy for receiver. |
 | `npm run test:urls`| Checks receiver URL builders so QR pairing stays on the phone app origin.   |
 | `npm run test:wss` | Starts a temporary TLS receiver and verifies the localhost WSS upgrade accepts `hello`. |
@@ -338,14 +351,18 @@ front both ports with a single HTTPS origin. Out of scope here; see Caddy's
 
 ## Production hosting note
 
-The frontend can be served from a static public origin (eventually
-`https://cam.knoxnetvms.com`) and still work LAN-only for media:
+The frontend can be served from the static public origin
+`https://cam.knoxnetvms.com` and still work LAN-only for media:
 
 - The static frontend is just HTML+JS — it has no server-side logic.
-- The phone's `?receiver=ws://<lan-ip>:8787/ws` or
-  `?receiver=wss://<lan-ip>:8787/ws` parameter directs WebRTC
-  signaling at the **local** receiver. Media never traverses the public host.
+- The phone's `?receiver=wss://<local-ip>:8787/ws&pair=<code>` parameter
+  directs WebRTC signaling at the **local** receiver. Media never traverses the
+  public host.
 - Pairing codes and operator acceptance still gate every connection.
+- Cloudflare Pages deployment commands and custom-domain setup are documented
+  in [`docs/cloudflare-pages.md`](docs/cloudflare-pages.md).
+- GitHub repo/release commands are documented in
+  [`docs/github-release.md`](docs/github-release.md).
 
 ## Roadmap / TODOs
 
