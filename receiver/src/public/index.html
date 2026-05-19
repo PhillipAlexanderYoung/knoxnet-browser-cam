@@ -30,6 +30,10 @@
               <div class="pairing__code" id="pairing-code">––––––</div>
               <div class="caps muted">Phone pairing URL</div>
               <div class="pairing__url" id="pairing-url">…</div>
+              <div class="caps muted">Phone app origin</div>
+              <div class="pairing__url" id="phone-app-url">…</div>
+              <div class="caps muted">Embedded receiver WSS URL</div>
+              <div class="pairing__url" id="receiver-ws-url">…</div>
               <div class="caps muted">Receiver dashboard URL</div>
               <div class="pairing__url pairing__url--dashboard" id="dashboard-url">…</div>
               <div class="pairing__hint">
@@ -56,6 +60,24 @@
           <div class="counts" id="camera-counts"></div>
           <div id="cameras" class="cameras">
             <div class="empty">No cameras connected yet. Scan the QR with your phone.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card remote-card">
+        <div class="card__title">REMOTE ACCESS</div>
+        <div class="remote-grid">
+          <div>
+            <div class="remote-mode" id="remote-mode">Loading remote mode…</div>
+            <p class="remote-copy">
+              Cloudflare Pages hosts the phone app shell only. The phone still connects
+              directly to this receiver over LAN or WireGuard; video is not relayed
+              through Cloudflare.
+            </p>
+          </div>
+          <div class="remote-links">
+            <a href="/docs/wireguard-remote-camera.md" id="wireguard-doc-link">WireGuard setup guide</a>
+            <span>Recommended remote camera mode: iPhone joins the private VPN, then scans this receiver QR.</span>
           </div>
         </div>
       </section>

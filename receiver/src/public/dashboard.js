@@ -51,6 +51,14 @@ function renderInfo(info) {
   el("receiver-name").textContent = `${info.name} • ${receiverDashboardUrl}`;
   el("pairing-code").textContent = info.pairingCode;
   el("pairing-url").textContent = phonePairingUrl;
+  const phoneAppUrl = el("phone-app-url");
+  if (phoneAppUrl) {
+    phoneAppUrl.textContent = info.phoneAppUrl ?? "unknown";
+  }
+  const receiverWsUrl = el("receiver-ws-url");
+  if (receiverWsUrl) {
+    receiverWsUrl.textContent = info.receiverWsUrl ?? "unknown";
+  }
   const dashboardUrl = el("dashboard-url");
   if (dashboardUrl) {
     dashboardUrl.textContent = receiverDashboardUrl;
@@ -74,6 +82,15 @@ function renderInfo(info) {
   const mode = el("accept-mode");
   if (mode) {
     mode.textContent = `Auto-accept known: ${info.autoAcceptKnown ? "on" : "off"} • Auto-accept all: ${info.autoAcceptAll ? "on" : "off"} • stale TTL: ${Math.round((info.staleCameraTtlMs ?? 0) / 1000)}s`;
+  }
+  const remoteMode = el("remote-mode");
+  if (remoteMode) {
+    const appHost = safeHost(info.phoneAppUrl);
+    const receiverHost = safeHost(info.receiverWsUrl);
+    const cloudMode = info.phoneAppMode === "cloud" || appHost === "cam.knoxnetvms.com";
+    remoteMode.textContent = cloudMode
+      ? `Remote mode ready: QR opens ${appHost}; receiver target is ${receiverHost}. Use WireGuard when the phone is away from this LAN.`
+      : `Development mode: QR opens ${appHost}; receiver target is ${receiverHost}.`;
   }
 }
 
@@ -297,6 +314,14 @@ function escapeHtml(s) {
       "'": "&#39;",
     }[c]),
   );
+}
+
+function safeHost(rawUrl) {
+  try {
+    return new URL(rawUrl).host;
+  } catch {
+    return rawUrl || "unknown";
+  }
 }
 
 document.addEventListener("click", async (e) => {

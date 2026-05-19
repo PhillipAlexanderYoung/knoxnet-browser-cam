@@ -79,9 +79,18 @@ body {
   grid-template-columns: 1fr 1fr;
   margin-top: 18px;
 }
+.remote-card {
+  margin-top: 18px;
+}
+.remote-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(240px, 0.7fr);
+  gap: 16px;
+}
 
 @media (max-width: 820px) {
   .grid { grid-template-columns: 1fr; }
+  .remote-grid { grid-template-columns: 1fr; }
 }
 
 .card {
@@ -149,6 +158,32 @@ a.pairing__url:hover {
   line-height: 1.4;
   color: var(--text-secondary);
   margin: 0 0 12px;
+}
+.remote-mode {
+  font-size: 13px;
+  color: var(--accent);
+  line-height: 1.45;
+  margin-bottom: 8px;
+}
+.remote-copy,
+.remote-links span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+}
+.remote-links {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+.remote-links a {
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: none;
+}
+.remote-links a:hover {
+  text-decoration: underline;
 }
 .pairing__qr img {
   width: 160px; height: 160px;

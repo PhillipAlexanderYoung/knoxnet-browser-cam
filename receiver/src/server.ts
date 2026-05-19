@@ -20,6 +20,7 @@ import { attachSignaling } from "./signaling.js";
 import { createEventLog } from "./events.js";
 import { createKnownDeviceStore } from "./known-devices.js";
 import {
+  DEFAULT_PHONE_APP_URL,
   buildReceiverUrls,
   httpScheme,
   type ReceiverUrlConfig,
@@ -30,6 +31,7 @@ const __dirname = path.dirname(__filename);
 // When built, server.js lives in dist/, and we want to serve from dist/public.
 // When run via tsx, this resolves to src/public.
 const STATIC_DIR = path.resolve(__dirname, "public");
+const DOCS_DIR = path.resolve(__dirname, "..", "..", "docs");
 
 const HOST = process.env.HOST ?? "0.0.0.0";
 const PORT = Number(process.env.PORT ?? 8787);
@@ -46,9 +48,12 @@ const BRIDGE_URL = process.env.BRIDGE_URL?.replace(/\/+$/, "");
 const USE_TLS =
   (process.env.WSS ?? process.env.HTTPS ?? "false").toLowerCase() === "true";
 const PHONE_APP_SCHEME =
-  process.env.PHONE_APP_SCHEME ?? (USE_TLS ? "https" : "http");
-const PHONE_APP_PORT = Number(process.env.PHONE_APP_PORT ?? 5173);
+  process.env.PHONE_APP_SCHEME;
+const PHONE_APP_PORT = process.env.PHONE_APP_PORT
+  ? Number(process.env.PHONE_APP_PORT)
+  : undefined;
 const PHONE_APP_URL = process.env.PHONE_APP_URL?.replace(/\/+$/, "");
+const PHONE_APP_ENV = process.env.PHONE_APP_ENV;
 const TLS_KEY_PATH =
   process.env.TLS_KEY_PATH ??
   path.resolve(__dirname, "..", "..", ".cert", "knoxnet-dev.key");
@@ -69,6 +74,7 @@ const urlConfig: ReceiverUrlConfig = {
   receiverPort: PORT,
   useTls: USE_TLS,
   phoneAppUrl: PHONE_APP_URL,
+  phoneAppEnv: PHONE_APP_ENV,
   phoneAppScheme: PHONE_APP_SCHEME,
   phoneAppPort: PHONE_APP_PORT,
 };
@@ -114,6 +120,12 @@ app.get("/api/info", async (_req: Request, res: Response) => {
     dashboardUrl: urls.dashboardUrl,
     receiverWsUrl: urls.receiverWsUrl,
     phoneAppUrl: urls.phoneAppUrl,
+    phoneAppDefaultUrl: DEFAULT_PHONE_APP_URL,
+    phoneAppMode: PHONE_APP_URL
+      ? "custom"
+      : (PHONE_APP_ENV ?? "").toLowerCase() === "dev" || PHONE_APP_SCHEME || PHONE_APP_PORT
+        ? "dev"
+        : "cloud",
     autoAcceptKnown: AUTO_ACCEPT_KNOWN,
     autoAcceptAll: AUTO_ACCEPT_ALL,
     staleCameraTtlMs: STALE_CAMERA_TTL_MS,
@@ -289,6 +301,7 @@ app.get("/api/pair-qr", async (_req: Request, res: Response) => {
   }
 });
 
+app.use("/docs", express.static(DOCS_DIR));
 app.use(express.static(STATIC_DIR));
 
 app.get("*", (_req: Request, res: Response) => {

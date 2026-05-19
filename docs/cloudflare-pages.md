@@ -15,6 +15,10 @@ WebRTC media and WebSocket signaling remain between the phone and the local
 receiver/bridge. Cloudflare only serves the HTML, CSS, and JavaScript for the
 phone UI.
 
+The receiver now uses `https://cam.knoxnetvms.com` as the normal phone app URL.
+Use `PHONE_APP_URL=https://<lan-ip>:5173` or `PHONE_APP_ENV=dev` when actively
+developing against local Vite.
+
 ## Local Build
 
 ```bash

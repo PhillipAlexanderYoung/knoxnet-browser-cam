@@ -23,6 +23,8 @@ Publishing guides:
 
 - [Cloudflare Pages hosting](docs/cloudflare-pages.md) for
   `https://cam.knoxnetvms.com`.
+- [WireGuard remote camera mode](docs/wireguard-remote-camera.md) for phones
+  away from the receiver LAN.
 - [GitHub publishing and releases](docs/github-release.md).
 - [Knoxnet VMS sidecar/plugin model](docs/knoxnet-vms-plugin.md).
 
@@ -59,17 +61,30 @@ rtsp://<host>:8554/<camera-slug>  →  Knoxnet VMS or any RTSP client
 ## Prerequisites
 
 - **Node.js ≥ 20** and npm ≥ 10.
-- A phone + a desktop on the **same Wi-Fi**.
+- A phone + a desktop on the **same Wi-Fi**, or a WireGuard VPN where the phone
+  can reach the receiver.
 
 ## Setup
 
 ```bash
 cd /home/operator1/Documents/knoxnet-browser-cam
 npm install
-npm run dev:all
+npm run local:cloud-phone
 ```
 
-`npm run dev:all` is the recommended phone-testing command. It starts the
+For normal local use, start the bridge + receiver and let the QR open the
+Cloudflare-hosted phone app:
+
+```bash
+npm run local:cloud-phone
+```
+
+That QR opens `https://cam.knoxnetvms.com`, but embeds a local receiver URL such
+as `wss://<lan-or-vpn-ip>:8787/ws`. Cloudflare serves only the phone app shell;
+signaling, video, bridge, and RTSP stay direct to your receiver/bridge over LAN
+or WireGuard. Because the phone app is HTTPS, use WSS for the receiver.
+
+For active development of the phone app, use `npm run dev:all`. It starts the
 RTSP bridge, the receiver with HTTPS/WSS signaling, and the HTTPS Vite phone app
 together:
 
@@ -123,7 +138,13 @@ For a receiver + web app without the RTSP bridge:
 npm run dev:https
 ```
 
-For just the receiver with phone-friendly HTTPS/WSS URL defaults:
+For just the receiver with the Cloudflare-hosted phone app:
+
+```bash
+npm run receiver:cloud-phone
+```
+
+For just the receiver with local Vite phone-app URL defaults:
 
 ```bash
 npm run receiver:dev-phone
@@ -142,8 +163,8 @@ On boot, the receiver prints its **pairing code** and a **pairing URL**
 [receiver] Knoxnet browser-cam receiver listening on https://0.0.0.0:8787
 [receiver] WebSocket signaling at wss://192.168.1.42:8787/ws
 [receiver] Pairing code (one-time print): X7K9PA
-[receiver] Phone app URL: https://192.168.1.42:5173
-[receiver] Pairing URL: https://192.168.1.42:5173/?receiver=wss%3A%2F%2F192.168.1.42%3A8787%2Fws&pair=X7K9PA&autostart=1
+[receiver] Phone app URL: https://cam.knoxnetvms.com
+[receiver] Pairing URL: https://cam.knoxnetvms.com/?receiver=wss%3A%2F%2F192.168.1.42%3A8787%2Fws&pair=X7K9PA&autostart=1
 [receiver] Scan this URL with the iPhone Camera app to open the phone app.
 [receiver] Dashboard:    https://192.168.1.42:8787/
 [receiver] From now on, the pairing code is redacted: X****A
@@ -161,17 +182,19 @@ Use that address as `<lan-ip>` everywhere below.
 
 ## Pairing flow walkthrough
 
-1. **On desktop:** run `npm run dev:all`, then open `https://<lan-ip>:8787/`.
-   This is the receiver dashboard. It shows the phone pairing URL/QR separately
-   from the dashboard URL.
+1. **On desktop:** run `npm run local:cloud-phone` for normal use, or
+   `npm run dev:all` when editing `web/`. Then open the receiver dashboard.
+   The dashboard shows the phone app origin, the embedded receiver WSS URL, and
+   the dashboard URL separately.
 2. **On iPhone:** scan the dashboard QR with the native Camera app. It opens
-   `https://<lan-ip>:5173/?receiver=wss://<lan-ip>:8787/ws&pair=<code>&autostart=1`.
-3. **Phone:** before or after scanning, open `https://<lan-ip>:8787/` in Safari
-   and accept the local receiver certificate. Then open/return to the QR URL,
-   accept the phone app certificate if prompted, and allow camera permission.
-   The app fills the receiver URL and pairing code automatically and tries to
-   start streaming. If permission was blocked, allow camera access in the
-   browser prompt or Settings, then tap **Retry camera access**.
+   `https://cam.knoxnetvms.com/?receiver=wss://<lan-ip>:8787/ws&pair=<code>&autostart=1`
+   for normal use, or `https://<lan-ip>:5173/...` in dev mode.
+3. **Phone:** if the receiver uses a self-signed local TLS certificate, open
+   `https://<lan-ip>:8787/` in Safari once and accept it before scanning. Then
+   open/return to the QR URL and allow camera permission. The app fills the
+   receiver URL and pairing code automatically and tries to start streaming. If
+   permission was blocked, allow camera access in the browser prompt or Settings,
+   then tap **Retry camera access**.
 4. **Desktop dashboard:** click **Accept** on the pending camera. With
    `npm run dev:all`, the receiver already has
    `BRIDGE_URL=http://localhost:8790`, so it allocates a MediaMTX path and shows
@@ -271,6 +294,29 @@ RTSP stream requires a MediaMTX binary available on `PATH`, in
 `/home/operator1/Documents/Knoxnet-VMS/mediamtx/mediamtx`, or via
 `MEDIAMTX_BINARY`. WHIP trickle-ICE PATCH support is marked as follow-up in code.
 
+## Cloudflare-hosted phone app and remote mode
+
+`https://cam.knoxnetvms.com` is the default phone app URL for normal receiver
+pairing. This is useful because users do not need to run or trust a local Vite
+HTTPS app just to open the camera UI on an iPhone.
+
+What it does:
+
+- Serves the static phone app shell over a trusted public HTTPS origin.
+- Lets the receiver QR embed a LAN or VPN WSS URL such as
+  `wss://10.44.0.1:8787/ws`.
+- Keeps pairing, signaling, WebRTC media, bridge ingest, and RTSP local/direct.
+
+What it does not do:
+
+- It does not relay video or WebSocket signaling through Cloudflare.
+- It does not make a receiver behind NAT reachable by itself.
+- It does not make RTSP safe to expose to the public internet.
+
+For phones away from the LAN, use WireGuard first: the phone joins a private VPN
+and reaches the receiver at a VPN IP, for example `wss://10.44.0.1:8787/ws`.
+See [`docs/wireguard-remote-camera.md`](docs/wireguard-remote-camera.md).
+
 ## HTTPS caveat (important for phones)
 
 Most phone browsers refuse `getUserMedia` on plain `http://<lan-ip>` (only
@@ -308,15 +354,17 @@ front both ports with a single HTTPS origin. Out of scope here; see Caddy's
 | Script             | What it does                                                                |
 | ------------------ | --------------------------------------------------------------------------- |
 | `npm install`      | Installs all workspaces (web + receiver + bridge).                          |
-| `npm run dev`      | Runs receiver and Vite dev server over HTTP for desktop-only testing.        |
-| `npm run dev:all`  | Recommended phone flow: bridge + WSS receiver + HTTPS Vite app.             |
+| `npm run dev`      | Runs receiver and Vite dev server over HTTP for desktop-only development.    |
+| `npm run dev:all`  | Active phone-app development: bridge + WSS receiver + HTTPS Vite app.        |
 | `npm run dev:cert` | Creates/reuses `.cert/knoxnet-dev.*` for local HTTPS/WSS.                   |
 | `npm run bridge`   | Just the bridge (`tsx watch src/server.ts`).                                |
 | `npm run dev:bridge` | Alias for the bridge dev server.                                          |
 | `npm run doctor`   | Prints MediaMTX detection and RTSP health check commands.                  |
 | `npm run dev:https`| Runs WSS receiver and HTTPS Vite app without the RTSP bridge.                |
-| `npm run receiver:dev-phone` | Just the WSS receiver with phone-app URL defaults for `https://<lan-ip>:5173`. |
-| `npm run receiver` | Just the receiver (`tsx watch src/server.ts`); set `PHONE_APP_URL` if the phone app is not on the default derived origin. |
+| `npm run receiver:dev-phone` | Just the WSS receiver with local Vite phone-app URL defaults for `https://<lan-ip>:5173`. |
+| `npm run receiver:cloud-phone` | Just the WSS receiver with QR URLs opening `https://cam.knoxnetvms.com`. |
+| `npm run local:cloud-phone` | Bridge + WSS receiver for local/VPN use with the Cloudflare-hosted phone app. |
+| `npm run receiver` | Just the receiver (`tsx watch src/server.ts`); normal QR URLs open `https://cam.knoxnetvms.com` unless overridden. |
 | `npm run web`      | Just the Vite dev server on `:5173`.                                        |
 | `npm run build:web`| Builds only the static phone web app into `web/dist`.                       |
 | `npm run deploy:pages` | Deploys `web/dist` to Cloudflare Pages project `knoxnet-browser-cam` without rebuilding. |
@@ -333,9 +381,10 @@ front both ports with a single HTTPS origin. Out of scope here; see Caddy's
 | `PORT`        | `8787`                        | HTTP + WS port                                                                           |
 | `HOST`        | `0.0.0.0`                     | Bind address                                                                             |
 | `PUBLIC_HOST` | auto-detected LAN IP          | Hostname printed into the pairing URL and `/api/info`                                    |
-| `PHONE_APP_URL` | derived from `PHONE_APP_SCHEME://PUBLIC_HOST:PHONE_APP_PORT` | Full phone web app origin, e.g. `https://cam.knoxnetvms.com` or `https://192.168.1.42:5173`. |
-| `PHONE_APP_SCHEME` | `https` when `WSS=true`, else `http` | Scheme used for the derived phone app URL. |
-| `PHONE_APP_PORT` | `5173` | Port used for the derived phone app URL. |
+| `PHONE_APP_URL` | `https://cam.knoxnetvms.com` | Full phone web app origin. Set to `https://<lan-ip>:5173` for local Vite or another hosted app. |
+| `PHONE_APP_ENV` | unset | Set `dev` to derive a local Vite app URL from `PHONE_APP_SCHEME://PUBLIC_HOST:PHONE_APP_PORT`. |
+| `PHONE_APP_SCHEME` | `https` when `WSS=true`, else `http` in dev mode | Scheme used for the derived local phone app URL. |
+| `PHONE_APP_PORT` | `5173` in dev mode | Port used for the derived local phone app URL. |
 | `WSS` / `HTTPS` | `false` | If `true`, receiver serves HTTPS dashboard and WSS signaling using `TLS_KEY_PATH` / `TLS_CERT_PATH`. |
 | `TLS_KEY_PATH` | `.cert/knoxnet-dev.key` | TLS key used when `WSS=true`. |
 | `TLS_CERT_PATH` | `.cert/knoxnet-dev.crt` | TLS certificate used when `WSS=true`. |
@@ -351,14 +400,16 @@ front both ports with a single HTTPS origin. Out of scope here; see Caddy's
 
 ## Production hosting note
 
-The frontend can be served from the static public origin
-`https://cam.knoxnetvms.com` and still work LAN-only for media:
+The frontend is served from the static public origin
+`https://cam.knoxnetvms.com` by default and still works LAN/VPN-only for media:
 
 - The static frontend is just HTML+JS — it has no server-side logic.
-- The phone's `?receiver=wss://<local-ip>:8787/ws&pair=<code>` parameter
-  directs WebRTC signaling at the **local** receiver. Media never traverses the
-  public host.
+- The phone's `?receiver=wss://<local-or-vpn-ip>:8787/ws&pair=<code>`
+  parameter directs WebRTC signaling at the receiver. Media never traverses the
+  Cloudflare Pages host.
 - Pairing codes and operator acceptance still gate every connection.
+- Remote cameras need a reachable private path such as WireGuard. Cloudflare
+  Pages alone does not make a receiver reachable from the internet.
 - Cloudflare Pages deployment commands and custom-domain setup are documented
   in [`docs/cloudflare-pages.md`](docs/cloudflare-pages.md).
 - GitHub repo/release commands are documented in

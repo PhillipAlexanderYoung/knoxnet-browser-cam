@@ -3,9 +3,12 @@ export interface ReceiverUrlConfig {
   receiverPort: number;
   useTls: boolean;
   phoneAppUrl?: string;
+  phoneAppEnv?: string;
   phoneAppScheme?: string;
   phoneAppPort?: number;
 }
+
+export const DEFAULT_PHONE_APP_URL = "https://cam.knoxnetvms.com";
 
 export interface ReceiverUrls {
   dashboardUrl: string;
@@ -33,6 +36,10 @@ export function buildReceiverWsUrl(config: ReceiverUrlConfig): string {
 export function buildPhoneAppUrl(config: ReceiverUrlConfig): string {
   const explicit = config.phoneAppUrl?.replace(/\/+$/, "");
   if (explicit) return explicit;
+
+  const env = config.phoneAppEnv?.trim().toLowerCase();
+  const hasDevOverride = env === "dev" || config.phoneAppScheme || config.phoneAppPort;
+  if (!hasDevOverride) return DEFAULT_PHONE_APP_URL;
 
   const scheme = config.phoneAppScheme ?? (config.useTls ? "https" : "http");
   const port = config.phoneAppPort ?? 5173;
