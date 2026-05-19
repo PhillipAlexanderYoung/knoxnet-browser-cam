@@ -12,8 +12,10 @@ the local Knoxnet VMS receiver is the only consumer.
   the connection is closed with `4001 bad-pairing-code`.
 - **Operator-controlled acceptance.** Cameras connect in `pending` state and
   must be **Accepted** from the receiver dashboard before any SDP/ICE is
-  forwarded. An optional `AUTO_ACCEPT=true` env exists for closed-network test
-  rigs only.
+  forwarded. Operators can trust a known device after first pairing; with
+  `AUTO_ACCEPT_KNOWN=true` that device can reconnect quickly after it presents
+  the current pairing code. `AUTO_ACCEPT_ALL=true` (or the legacy
+  `AUTO_ACCEPT=true`) is for closed-network test rigs only.
 - **No anonymous open streaming.** There is no public listing of streams. The
   receiver only relays SDP/ICE between a matched `camera` and `viewer`
   bound to the same `sessionId`.
@@ -21,8 +23,13 @@ the local Knoxnet VMS receiver is the only consumer.
   subsequent receiver logs print a redacted form (`A****Z`).
 - **localStorage scope.** Only harmless preferences are persisted by the
   phone-side app: camera display name, last receiver URL, last pairing code,
-  discoverable toggle, and selected camera/resolution/fps/bitrate. No tokens,
-  no media data, no IP/MAC information.
+  discoverable toggle, browser-generated `deviceId`, and selected
+  camera/resolution/fps/bitrate. No tokens, no media data, no IP/MAC
+  information.
+- **Known-device metadata.** The receiver stores trusted-device metadata in a
+  local JSON file (`receiver/data/known-devices.json` by default). Entries
+  contain device ID, display name, first/last seen timestamps, trust/auto-accept
+  flags, and last session ID only.
 - **STUN-only.** The peer connection uses public STUN servers
   (`stun.l.google.com:19302`). There is intentionally no TURN relay — this
   enforces that both phone and receiver are on a network that can reach each
@@ -54,4 +61,6 @@ the local Knoxnet VMS receiver is the only consumer.
 3. Run the receiver on a host that is reachable from the phone over LAN only
    (don't expose port 8787 over the public internet without TLS + auth in
    front of it).
-4. Keep `AUTO_ACCEPT` off in production.
+4. Keep `AUTO_ACCEPT_ALL` / legacy `AUTO_ACCEPT` off in production. Use
+   `AUTO_ACCEPT_KNOWN` only for devices you have explicitly trusted from the
+   receiver dashboard.

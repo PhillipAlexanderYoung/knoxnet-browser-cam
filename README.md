@@ -165,11 +165,22 @@ Use that address as `<lan-ip>` everywhere below.
    `npm run dev:all`, the receiver already has
    `BRIDGE_URL=http://localhost:8790`, so it allocates a MediaMTX path and shows
    the RTSP URL after accept.
-5. **RTSP clients / Knoxnet VMS:** wait until the dashboard shows bridge
+5. **Trust for fast reconnect:** after the first successful pair, click
+   **Trust this device** on the receiver dashboard. The phone keeps a harmless
+   browser-generated `deviceId` in localStorage; the receiver stores only that
+   ID, display name, timestamps, trust/auto-accept flags, and last session in
+   `receiver/data/known-devices.json` by default. No secrets or media are stored.
+6. **RTSP clients / Knoxnet VMS:** wait until the dashboard shows bridge
    ingest `publishing`, then add the displayed
    `rtsp://<host>:8554/<camera-slug>` URL. The phone still does not host RTSP;
    MediaMTX does. If the status is `allocated-no-media` or `error`, VLC will not
    have a playable stream yet.
+
+On reconnect, trusted known devices still need the current pairing code but can
+move from `hello` to accepted/streaming without another manual dashboard click
+when `AUTO_ACCEPT_KNOWN=true`. The phone shows a visible reconnect prompt and
+backs off for a few attempts if a previously active stream drops; tapping Stop
+cancels automatic retries.
 
 ## Standalone bridge mode
 
@@ -287,7 +298,12 @@ front both ports with a single HTTPS origin. Out of scope here; see Caddy's
 | `TLS_KEY_PATH` | `.cert/knoxnet-dev.key` | TLS key used when `WSS=true`. |
 | `TLS_CERT_PATH` | `.cert/knoxnet-dev.crt` | TLS certificate used when `WSS=true`. |
 | `PAIRING_CODE`| random                        | Override the random code (e.g. for tests). Stored uppercased.                            |
-| `AUTO_ACCEPT` | `false`                       | If `true`, cameras are auto-accepted on hello. **Closed-network test rigs only.**        |
+| `AUTO_ACCEPT_KNOWN` | `true` | Auto-accept dashboard-trusted known devices after they present the current pairing code. |
+| `AUTO_ACCEPT_ALL` | `false` | If `true`, any camera with the current pairing code is auto-accepted. **Closed-network test rigs only.** |
+| `AUTO_ACCEPT` | `false` | Legacy alias for `AUTO_ACCEPT_ALL=true`. Prefer the explicit flags above. |
+| `STALE_CAMERA_TTL_MS` | `300000` | Pending/disconnected sessions older than this are removed; known-device records are kept. |
+| `RECEIVER_DATA_DIR` | `receiver/data` | Local metadata directory for known devices. Gitignored. |
+| `KNOWN_DEVICES_PATH` | `RECEIVER_DATA_DIR/known-devices.json` | Override the known-device JSON file path. |
 | `RECEIVER_NAME` | `<hostname>-knoxnet-receiver` | Display name surfaced in `/api/info` and on the phone status row.                       |
 | `BRIDGE_URL` | unset | Optional bridge API URL, e.g. `http://localhost:8790`, used to allocate RTSP paths and relay WHIP offers. |
 
