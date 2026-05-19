@@ -10,8 +10,9 @@
   ],
   "scripts": {
     "dev": "concurrently -k -n receiver,web -c blue,magenta \"npm:receiver\" \"npm:web\"",
-    "dev:https": "concurrently -k -n receiver,web -c blue,magenta \"npm:receiver\" \"npm:web:https\"",
-    "dev:all": "concurrently -k -n bridge,receiver,web -c green,blue,magenta \"npm:bridge\" \"npm:receiver\" \"npm:web\"",
+    "dev:https": "npm run dev:cert && concurrently -k -n receiver,web -c blue,magenta \"WSS=true npm run receiver\" \"npm:web:https\"",
+    "dev:all": "npm run dev:cert && concurrently -k -n bridge,receiver,web -c green,blue,magenta \"npm:bridge\" \"BRIDGE_URL=http://localhost:8790 WSS=true npm run receiver\" \"npm:web:https\"",
+    "dev:cert": "node scripts/ensure-dev-cert.mjs",
     "dev:bridge": "npm --workspace bridge run dev",
     "receiver": "npm --workspace receiver run dev",
     "bridge": "npm --workspace bridge run dev",

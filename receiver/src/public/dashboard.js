@@ -31,15 +31,20 @@ async function fetchInfo() {
 function renderInfo(info) {
   state.info = info;
   state.pairingCode = info.pairingCode;
-  el("receiver-name").textContent = `${info.name} • http://${info.publicHost}:${info.httpPort}`;
+  el("receiver-name").textContent = `${info.name} • ${info.dashboardUrl ?? `${info.tls ? "https" : "http"}://${info.publicHost}:${info.httpPort}/`}`;
   el("pairing-code").textContent = info.pairingCode;
   el("pairing-url").textContent = info.pairingUrl;
+  const dashboardUrl = el("dashboard-url");
+  if (dashboardUrl) {
+    dashboardUrl.textContent =
+      info.dashboardUrl ?? `${info.tls ? "https" : "http"}://${info.publicHost}:${info.httpPort}/`;
+  }
   el("pairing-qr").src = `/api/pair-qr?ts=${Date.now()}`;
   const bridge = el("bridge-status");
   if (bridge) {
     bridge.textContent = info.bridgeUrl
-      ? `Bridge enabled: ${info.bridgeUrl}`
-      : "Bridge disabled: set BRIDGE_URL=http://localhost:8790 to allocate RTSP paths.";
+      ? `Bridge connected: ${info.bridgeUrl}. RTSP paths appear after you accept a camera.`
+      : "RTSP bridge disabled. Restart with: BRIDGE_URL=http://localhost:8790 npm run receiver (or use npm run dev:all).";
   }
 }
 

@@ -60,6 +60,32 @@
   font-size: 12px;
 }
 
+.camera-callout--start {
+  border-color: rgba(34, 197, 94, 0.55);
+  background: rgba(34, 197, 94, 0.12);
+  color: #bbf7d0;
+}
+
+.camera-callout--start p {
+  color: #dcfce7;
+}
+
+.camera-callout__button {
+  width: 100%;
+  min-height: 48px;
+  border-radius: var(--r-button);
+  border: 1px solid var(--accent);
+  background: rgba(34, 197, 94, 0.18);
+  color: var(--accent);
+  font-weight: 800;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+.camera-callout__button:disabled {
+  opacity: 0.5;
+}
+
 .videoframe__video {
   width: 100%;
   height: 100%;

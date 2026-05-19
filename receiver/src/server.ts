@@ -1,4 +1,6 @@
-import { createServer } from "node:http";
+import { createServer as createHttpServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
@@ -30,6 +32,18 @@ const PUBLIC_HOST = process.env.PUBLIC_HOST ?? detectLanIp() ?? "localhost";
 const AUTO_ACCEPT =
   (process.env.AUTO_ACCEPT ?? "false").toLowerCase() === "true";
 const BRIDGE_URL = process.env.BRIDGE_URL?.replace(/\/+$/, "");
+const USE_TLS =
+  (process.env.WSS ?? process.env.HTTPS ?? "false").toLowerCase() === "true";
+const PHONE_APP_SCHEME =
+  process.env.PHONE_APP_SCHEME ?? (USE_TLS ? "https" : "http");
+const PHONE_APP_PORT = Number(process.env.PHONE_APP_PORT ?? 5173);
+const PHONE_APP_URL = process.env.PHONE_APP_URL?.replace(/\/+$/, "");
+const TLS_KEY_PATH =
+  process.env.TLS_KEY_PATH ??
+  path.resolve(__dirname, "..", "..", ".cert", "knoxnet-dev.key");
+const TLS_CERT_PATH =
+  process.env.TLS_CERT_PATH ??
+  path.resolve(__dirname, "..", "..", ".cert", "knoxnet-dev.crt");
 
 const state = createPairingState(process.env.PAIRING_CODE);
 
@@ -50,10 +64,34 @@ function detectLanIp(): string | undefined {
   return undefined;
 }
 
+function httpScheme(): "http" | "https" {
+  return USE_TLS ? "https" : "http";
+}
+
+function wsScheme(): "ws" | "wss" {
+  return USE_TLS ? "wss" : "ws";
+}
+
+function dashboardUrl(): string {
+  return `${httpScheme()}://${PUBLIC_HOST}:${PORT}/`;
+}
+
+function receiverWsUrl(): string {
+  return `${wsScheme()}://${PUBLIC_HOST}:${PORT}/ws`;
+}
+
+function phoneAppUrl(): string {
+  if (PHONE_APP_URL) return PHONE_APP_URL;
+  return `${PHONE_APP_SCHEME}://${PUBLIC_HOST}:${PHONE_APP_PORT}`;
+}
+
 function pairingUrl(): string {
-  const wsUrl = `ws://${PUBLIC_HOST}:${PORT}/ws`;
-  // The frontend reads ?receiver and ?pair off the URL on load.
-  return `http://${PUBLIC_HOST}:${PORT}/?receiver=${encodeURIComponent(wsUrl)}&pair=${state.code}`;
+  const url = new URL(phoneAppUrl());
+  // The frontend reads these on load and autostarts as far as the browser allows.
+  url.searchParams.set("receiver", receiverWsUrl());
+  url.searchParams.set("pair", state.code);
+  url.searchParams.set("autostart", "1");
+  return url.toString();
 }
 
 const app = express();
@@ -70,8 +108,12 @@ app.get("/api/info", (_req: Request, res: Response) => {
     publicHost: PUBLIC_HOST,
     pairingCode: state.code,
     pairingUrl: pairingUrl(),
+    dashboardUrl: dashboardUrl(),
+    receiverWsUrl: receiverWsUrl(),
+    phoneAppUrl: phoneAppUrl(),
     autoAccept: AUTO_ACCEPT,
     bridgeUrl: BRIDGE_URL,
+    tls: USE_TLS,
     ts: new Date().toISOString(),
   });
 });
@@ -137,7 +179,23 @@ app.get("*", (_req: Request, res: Response) => {
   });
 });
 
-const httpServer = createServer(app);
+function createServer() {
+  if (!USE_TLS) return createHttpServer(app);
+  if (!existsSync(TLS_KEY_PATH) || !existsSync(TLS_CERT_PATH)) {
+    throw new Error(
+      `WSS=true requires a dev certificate. Run "npm run dev:cert" first, or set TLS_KEY_PATH/TLS_CERT_PATH. Missing ${TLS_KEY_PATH} / ${TLS_CERT_PATH}`,
+    );
+  }
+  return createHttpsServer(
+    {
+      key: readFileSync(TLS_KEY_PATH),
+      cert: readFileSync(TLS_CERT_PATH),
+    },
+    app,
+  );
+}
+
+const httpServer = createServer();
 const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
 const signaling = attachSignaling(wss, {
@@ -149,17 +207,18 @@ const signaling = attachSignaling(wss, {
 
 httpServer.listen(PORT, HOST, () => {
   const url = pairingUrl();
-  log(`Knoxnet browser-cam receiver listening on http://${HOST}:${PORT}`);
-  log(`WebSocket signaling at ws://${PUBLIC_HOST}:${PORT}/ws`);
+  log(`Knoxnet browser-cam receiver listening on ${httpScheme()}://${HOST}:${PORT}`);
+  log(`WebSocket signaling at ${receiverWsUrl()}`);
   log(`Pairing code (one-time print): ${state.code}`);
+  log(`Phone app URL: ${phoneAppUrl()}`);
   log(`Pairing URL: ${url}`);
-  log(`Open this URL on the phone (must be on the same LAN).`);
+  log(`Scan this URL with the iPhone Camera app to open the phone app.`);
   if (AUTO_ACCEPT) log("AUTO_ACCEPT=true: cameras will be auto-accepted on hello.");
-  log(`Dashboard:    http://${PUBLIC_HOST}:${PORT}/`);
+  log(`Dashboard:    ${dashboardUrl()}`);
   if (BRIDGE_URL) {
-    log(`Bridge API:   ${BRIDGE_URL}`);
+    log(`Bridge API:   ${BRIDGE_URL} (RTSP paths appear after accept)`);
   } else {
-    log("Bridge API:   disabled (set BRIDGE_URL=http://localhost:8790)");
+    log("Bridge API:   disabled. Restart with BRIDGE_URL=http://localhost:8790 npm run receiver, or use npm run dev:all.");
   }
   log(`From now on, the pairing code is redacted: ${redactCode(state.code)}`);
 

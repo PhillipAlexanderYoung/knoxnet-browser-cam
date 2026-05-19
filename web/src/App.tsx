@@ -31,6 +31,15 @@ function urlSettingsOverride(base: CameraSettings): CameraSettings {
   }
 }
 
+function urlWantsAutostart(): boolean {
+  try {
+    const value = new URLSearchParams(window.location.search).get("autostart");
+    return value === "1" || value === "true";
+  } catch {
+    return false;
+  }
+}
+
 function deriveReceiverHttpFromWs(ws: string): string | null {
   try {
     if (!ws) return null;
@@ -49,6 +58,7 @@ export default function App() {
   );
   const [toast, setToast] = useState<string | null>(null);
   const [receiverInfo, setReceiverInfo] = useState<ReceiverInfo | null>(null);
+  const [autoStart] = useState(urlWantsAutostart);
   const api = useCameraStream();
 
   // Persist initial URL-derived settings (so they survive a reload).
@@ -212,6 +222,7 @@ export default function App() {
           settings={settings}
           receiverName={receiverName}
           onChangeAudio={onChangeAudio}
+          autoStart={autoStart}
         />
       )}
       {tab === "network" && (

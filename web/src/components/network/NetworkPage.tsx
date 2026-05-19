@@ -28,6 +28,11 @@ export interface ReceiverInfo {
   publicHost: string;
   pairingCode: string;
   pairingUrl: string;
+  dashboardUrl?: string;
+  receiverWsUrl?: string;
+  phoneAppUrl?: string;
+  bridgeUrl?: string;
+  tls?: boolean;
   ts: string;
 }
 

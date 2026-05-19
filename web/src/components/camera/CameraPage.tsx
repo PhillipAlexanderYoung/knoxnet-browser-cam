@@ -18,6 +18,7 @@ interface CameraPageProps {
   settings: CameraSettings;
   receiverName: string | null;
   onChangeAudio: (next: boolean) => void;
+  autoStart: boolean;
 }
 
 function formatTrackBadge(settings: MediaTrackSettings | null): string | null {
@@ -93,11 +94,13 @@ export function CameraPage({
   settings,
   receiverName,
   onChangeAudio,
+  autoStart,
 }: CameraPageProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [previewActive, setPreviewActive] = useState(false);
   const previewedFor = useRef<string>("");
+  const autoStartAttempted = useRef(false);
   const cameraAccessError = api.cameraAccessError;
 
   useEffect(() => {
@@ -155,12 +158,7 @@ export function CameraPage({
     settings.audioEnabled,
   ]);
 
-  const handleRecordToggle = useCallback(async () => {
-    if (api.state === "streaming" || api.state === "paired" ||
-        api.state === "connecting" || api.state === "searching") {
-      await api.stop();
-      return;
-    }
+  const startStreaming = useCallback(async () => {
     if (!settings.receiverUrl || !settings.pairingCode) {
       setPermissionError(
         "Set receiver URL and pairing code on the Network tab first.",
@@ -188,6 +186,29 @@ export function CameraPage({
       setPermissionError((err as Error)?.message ?? "Failed to start stream");
     }
   }, [api, cameraAccessError, settings]);
+
+  const handleRecordToggle = useCallback(async () => {
+    if (api.state === "streaming" || api.state === "paired" ||
+        api.state === "connecting" || api.state === "searching") {
+      await api.stop();
+      return;
+    }
+    await startStreaming();
+  }, [api, startStreaming]);
+
+  useEffect(() => {
+    if (!autoStart || autoStartAttempted.current) return;
+    if (!settings.receiverUrl || !settings.pairingCode) return;
+    if (api.state !== "idle") return;
+    autoStartAttempted.current = true;
+    void startStreaming();
+  }, [
+    api.state,
+    autoStart,
+    settings.receiverUrl,
+    settings.pairingCode,
+    startStreaming,
+  ]);
 
   const isStreaming = api.state === "streaming";
   const isBusy =
@@ -276,6 +297,31 @@ export function CameraPage({
           </ul>
         </section>
       )}
+
+      {autoStart &&
+        settings.receiverUrl &&
+        settings.pairingCode &&
+        !isStreaming &&
+        !isBusy && (
+          <section className="camera-callout camera-callout--start" aria-live="polite">
+            <div className="camera-callout__title">
+              <Video size={18} />
+              Ready from pairing QR
+            </div>
+            <p>
+              Receiver and pairing code are filled in. If iOS needs a user tap,
+              use this button to allow camera access and start streaming.
+            </p>
+            <button
+              type="button"
+              className="camera-callout__button"
+              onClick={() => void startStreaming()}
+              disabled={Boolean(cameraAccessError)}
+            >
+              Allow camera and start streaming
+            </button>
+          </section>
+        )}
 
       <div className={`videoframe ${isStreaming ? "videoframe--live" : ""}`}>
         <video

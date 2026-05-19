@@ -123,6 +123,15 @@ body {
   border: 1px solid var(--border);
   border-radius: 8px;
 }
+.pairing__url--dashboard {
+  color: var(--text-muted);
+}
+.pairing__hint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  margin: -2px 0 12px;
+}
 .bridge-status {
   font-size: 11px;
   line-height: 1.4;
