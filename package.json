@@ -5,16 +5,20 @@
   "description": "Mobile-first web app + local Node.js receiver to turn a phone browser into a LAN WebRTC camera for the Knoxnet VMS.",
   "workspaces": [
     "web",
-    "receiver"
+    "receiver",
+    "bridge"
   ],
   "scripts": {
     "dev": "concurrently -k -n receiver,web -c blue,magenta \"npm:receiver\" \"npm:web\"",
     "dev:https": "concurrently -k -n receiver,web -c blue,magenta \"npm:receiver\" \"npm:web:https\"",
+    "dev:all": "concurrently -k -n bridge,receiver,web -c green,blue,magenta \"npm:bridge\" \"npm:receiver\" \"npm:web\"",
+    "dev:bridge": "npm --workspace bridge run dev",
     "receiver": "npm --workspace receiver run dev",
+    "bridge": "npm --workspace bridge run dev",
     "web": "npm --workspace web run dev",
     "web:https": "npm --workspace web run dev:https",
-    "build": "npm --workspace web run build && npm --workspace receiver run build",
-    "typecheck": "npm --workspace web run typecheck && npm --workspace receiver run typecheck",
+    "build": "npm --workspace web run build && npm --workspace receiver run build && npm --workspace bridge run build",
+    "typecheck": "npm --workspace web run typecheck && npm --workspace receiver run typecheck && npm --workspace bridge run typecheck",
     "start": "npm --workspace receiver run start"
   },
   "devDependencies": {

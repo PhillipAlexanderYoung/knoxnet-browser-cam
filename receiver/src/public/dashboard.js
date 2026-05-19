@@ -35,6 +35,12 @@ function renderInfo(info) {
   el("pairing-code").textContent = info.pairingCode;
   el("pairing-url").textContent = info.pairingUrl;
   el("pairing-qr").src = `/api/pair-qr?ts=${Date.now()}`;
+  const bridge = el("bridge-status");
+  if (bridge) {
+    bridge.textContent = info.bridgeUrl
+      ? `Bridge enabled: ${info.bridgeUrl}`
+      : "Bridge disabled: set BRIDGE_URL=http://localhost:8790 to allocate RTSP paths.";
+  }
 }
 
 el("copy-url").addEventListener("click", async () => {
@@ -68,6 +74,13 @@ function renderCameras() {
     const capBits = [];
     if (cam.capabilities?.audio) capBits.push("audio");
     if (cam.capabilities?.torch) capBits.push("torch");
+    const rtsp = cam.bridge?.rtspUrl
+      ? `<div class="camera__rtsp">
+          <span>RTSP</span>
+          <code>${escapeHtml(cam.bridge.rtspUrl)}</code>
+          <button class="btn btn--ghost" data-action="copy-rtsp" data-id="${cam.sessionId}">Copy</button>
+        </div>`
+      : "";
     div.innerHTML = `
       <span class="${dotClass}"></span>
       <div>
@@ -76,13 +89,15 @@ function renderCameras() {
           status: ${escapeHtml(cam.status)} • session: ${escapeHtml(cam.sessionId.slice(0, 6))}
           ${cam.remoteAddress ? "• " + escapeHtml(cam.remoteAddress) : ""}
           ${capBits.length ? "• " + capBits.join(", ") : ""}
+          ${cam.bridge?.ingestStatus ? "• bridge: " + escapeHtml(cam.bridge.ingestStatus) : ""}
         </div>
+        ${rtsp}
       </div>
       <div class="camera__actions">
         ${cam.status === "pending"
           ? `<button class="btn btn--primary" data-action="accept" data-id="${cam.sessionId}">Accept</button>`
           : ""}
-        ${cam.status === "accepted" || cam.status === "streaming"
+        ${(cam.status === "accepted" || cam.status === "streaming") && !cam.bridge
           ? `<button class="btn btn--primary" data-action="view" data-id="${cam.sessionId}">View Live</button>`
           : ""}
         <button class="btn btn--danger" data-action="remove" data-id="${cam.sessionId}">Remove</button>
@@ -120,6 +135,13 @@ document.addEventListener("click", async (e) => {
     if (state.viewer?.sessionId === id) closeViewer();
   } else if (action === "view") {
     await openViewer(id);
+  } else if (action === "copy-rtsp") {
+    const cam = state.cameras.get(id);
+    if (cam?.bridge?.rtspUrl) {
+      await navigator.clipboard.writeText(cam.bridge.rtspUrl);
+      t.textContent = "Copied!";
+      setTimeout(() => (t.textContent = "Copy"), 1200);
+    }
   }
 });
 

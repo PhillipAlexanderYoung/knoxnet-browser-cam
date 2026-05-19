@@ -123,6 +123,12 @@ body {
   border: 1px solid var(--border);
   border-radius: 8px;
 }
+.bridge-status {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  margin: 0 0 12px;
+}
 .pairing__qr img {
   width: 160px; height: 160px;
   border-radius: 12px;
@@ -200,6 +206,21 @@ body {
 .camera__name { font-weight: 600; font-size: 14px; }
 .camera__meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 .camera__actions { display: flex; gap: 8px; }
+.camera__rtsp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.camera__rtsp code {
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: var(--surface-1);
+  color: var(--accent);
+  word-break: break-all;
+}
 
 .viewer { margin-top: 18px; }
 .viewer.hidden { display: none; }

@@ -1,42 +1,104 @@
 # Knoxnet VMS integration
 
-> Status: **Future work for MVP.** Today, the receiver terminates the WebRTC
-> media stream in the dashboard browser tab acting as a `viewer`. A second
-> hop is needed to feed that stream into the existing Knoxnet VMS Python NVR
-> (`/home/operator1/Documents/Knoxnet-VMS`).
+> Status: **Bridge scaffold implemented.** This repo now has a standalone
+> `bridge/` service that manages MediaMTX, allocates RTSP paths, and lets the
+> receiver relay accepted phone-browser WebRTC offers into MediaMTX via WHIP.
+> Knoxnet VMS (`/home/operator1/Documents/Knoxnet-VMS`) is not modified.
 
-This document outlines three concrete bridging options, sorted by recommended
-effort. Search the codebase for `TODO(knoxnet-vms):` markers for the exact
-integration seams.
+This document outlines the chosen bridge architecture and the remaining
+packaging steps. Search the codebase for `TODO(knoxnet-vms):` markers for the
+exact future integration points.
 
-## Option 1 — `mediamtx` WHIP ingest + RTSP egress *(recommended)*
+## Chosen architecture — `bridge/` + MediaMTX WHIP ingest
 
-The Knoxnet VMS repo already ships `mediamtx/` (a single-binary media server
-that speaks WebRTC, WHIP/WHEP, RTSP, HLS, etc.).
+The bridge is separate on purpose: it can run today next to the receiver, and
+Knoxnet VMS can later package or supervise the same service. The phone browser
+does not and cannot host RTSP/ONVIF.
 
 Flow:
 
 ```
-phone browser ── WebRTC (WHIP) ──▶ mediamtx ── RTSP ──▶ Knoxnet VMS NVR
+phone browser ── WebSocket signaling ──▶ receiver/
+phone browser ── WebRTC media ─────────▶ MediaMTX WHIP
+receiver/ ────── bridge REST API ──────▶ bridge/ path + WHIP relay
+MediaMTX ─────── RTSP egress ──────────▶ Knoxnet VMS NVR
 ```
 
-Wiring steps:
+What exists now:
 
-1. Configure a WHIP path in `mediamtx.yml`, e.g. `phone1` with
-   `source: publisher` and `sourceProtocol: webrtc`.
-2. In this project's `receiver/`, replace (or run alongside) the dashboard
-   viewer with a small WHIP relay that POSTs the phone-side SDP offer to
-   mediamtx and forwards its answer back through our signaling WS. This keeps
-   the existing pairing/operator-accept flow intact.
-3. Knoxnet VMS reads the resulting `rtsp://localhost:8554/phone1` like any
-   other camera.
+- `bridge/` starts as an independent TypeScript workspace.
+- The bridge writes a local MediaMTX config with `all_others: source: publisher`,
+  starts `mediamtx` by default, and exposes:
+  - `GET /api/health`
+  - `GET /api/cameras`
+  - `POST /api/cameras`
+  - `POST /api/cameras/:id/whip`
+- `receiver/` accepts `BRIDGE_URL=http://localhost:8790`. On camera accept, it
+  allocates a path and shows `rtsp://<host>:8554/<camera-slug>` in the dashboard.
+- When a bridged camera sends its WebRTC offer, the receiver relays that SDP to
+  the bridge WHIP endpoint and sends MediaMTX's SDP answer back to the phone.
+
+Current limitations:
+
+- A complete RTSP stream requires a working `mediamtx` binary on `PATH` or
+  `MEDIAMTX_BINARY`.
+- The phone-side offer now waits briefly for ICE gathering so the WHIP POST has
+  candidates in SDP. WHIP trickle-ICE `PATCH` support is still a TODO marker.
+- The browser dashboard live viewer is bypassed for bridged cameras. Use the
+  displayed RTSP URL in Knoxnet VMS, VLC, ffplay, or another RTSP client.
 
 Tradeoffs:
 
-- **Pros:** Almost no new code; mediamtx is already in the VMS repo; battle-
-  tested transcoding to H.264/AAC where needed.
-- **Cons:** Adds a separate process to operate. Requires careful pairing-code
-  enforcement on the WHIP endpoint (e.g. via a JWT shim in `receiver/`).
+- **Pros:** keeps browser/WebRTC reality honest, uses a mature local restreamer,
+  avoids adding Knoxnet VMS dependencies to this repo, and gives VMS a plain
+  RTSP URL.
+- **Cons:** adds a local process and a LAN media listener. Firewall and network
+  placement matter.
+
+## Standalone runbook
+
+```bash
+cd /home/operator1/Documents/knoxnet-browser-cam
+npm install
+npm run bridge
+```
+
+In a second shell:
+
+```bash
+BRIDGE_URL=http://localhost:8790 npm run receiver
+```
+
+Then pair the phone as usual and accept the camera. The receiver dashboard shows
+the allocated RTSP URL. Add that URL to Knoxnet VMS as a normal RTSP camera,
+for example:
+
+```text
+rtsp://<bridge-host>:8554/<camera-slug>
+```
+
+## Knoxnet VMS packaging plan
+
+Knoxnet VMS can package this without changing the browser camera:
+
+1. Ship or locate a MediaMTX binary using the same pattern as the existing
+   `/home/operator1/Documents/Knoxnet-VMS/mediamtx/` directory.
+2. Start the bridge service as a local sidecar when browser-camera support is
+   enabled.
+3. Set receiver `BRIDGE_URL` to the bridge API URL.
+4. Read `camera.bridge.rtspUrl` from the receiver API/dashboard payload and add
+   it to the VMS camera model as an RTSP source.
+5. Later, move path lifecycle, auth policy, recording policy, and firewall
+   prompts into Knoxnet VMS while leaving `web/` as a browser-only camera.
+
+Security/locality notes:
+
+- The bridge REST API defaults to `127.0.0.1:8790` and should stay local unless
+  a trusted host needs to allocate paths.
+- MediaMTX defaults to `0.0.0.0` for RTSP/WebRTC so phones and RTSP clients on
+  the LAN can reach it. Treat that LAN as trusted or restrict it with host
+  firewall rules.
+- There is no cloud service and no third-party video relay in this design.
 
 ## Option 2 — `gstreamer` `webrtcbin` → `rtspserver`
 
@@ -72,12 +134,15 @@ Tradeoffs:
 
 | File | What changes |
 | --- | --- |
-| `receiver/src/server.ts` | On `camera-update` when `status` transitions to `streaming`, hand off the sessionId + a one-time bridge token to whichever Option-1/2/3 bridge is configured. |
-| `receiver/src/signaling.ts` | Allow a third role (`bridge`) that the chosen sidecar uses to play the `viewer` part (negotiates SDP/ICE in place of the dashboard tab). |
-| `web/src/components/network/NetworkPage.tsx` | The "Port (RTSP)" advanced row exists today to surface this future hop to the operator. Update its sublabel once a bridge is configured. |
+| `bridge/src/server.ts` | Standalone API, camera path allocation, and WHIP relay to MediaMTX. |
+| `bridge/src/mediamtx.ts` | Generated MediaMTX config and optional process lifecycle. |
+| `receiver/src/server.ts` | Reads `BRIDGE_URL`, allocates a bridge path on accept, and exposes bridge metadata in `/api/info`/camera records. |
+| `receiver/src/signaling.ts` | For bridged cameras, relays the phone offer to MediaMTX WHIP and returns the answer instead of pretending the phone hosts RTSP. |
+| `web/src/webrtc/peer.ts` | Waits briefly for ICE gathering before sending the SDP offer, improving WHIP compatibility without requiring immediate trickle support. |
 
 ## Why this isn't done in the MVP
 
-The phone-side capture and the operator-accepts-and-views loop are the
-risky/novel parts. Restreaming via mediamtx is mostly configuration, so it is
-deliberately deferred to keep MVP scope tight.
+The first bridge pass establishes the package boundary and MediaMTX handoff.
+Production hardening still needs end-to-end codec testing, WHIP trickle-ICE
+PATCH support if needed, process supervision, auth policy, and Knoxnet VMS UI
+for managing the resulting RTSP sources.

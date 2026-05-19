@@ -10,6 +10,7 @@ import {
   type CameraRecord,
   type PairingState,
 } from "./pairing.js";
+import type { BridgeClient } from "./bridge-client.js";
 
 // Message envelopes traveling over the signaling WebSocket.
 // Kept loose on intent (role-specific shape) but typed at the union level.
@@ -73,6 +74,7 @@ interface ServerDeps {
   state: PairingState;
   log: (...args: unknown[]) => void;
   autoAccept?: boolean;
+  bridgeClient?: BridgeClient | null;
 }
 
 export interface SignalingHandle {
@@ -86,7 +88,7 @@ export function attachSignaling(
   wss: WebSocketServer,
   deps: ServerDeps,
 ): SignalingHandle {
-  const { state, log, autoAccept } = deps;
+  const { state, log, autoAccept, bridgeClient } = deps;
   const clients = new WeakMap<WebSocket, ClientContext>();
   // Keep an indexable list so we can match camera <-> viewer pairs by sessionId.
   const cameraSockets = new Map<string, WebSocket>();
@@ -153,11 +155,11 @@ export function attachSignaling(
     for (const ws of set) send(ws, msg);
   }
 
-  function handleHelloCamera(
+  async function handleHelloCamera(
     ws: WebSocket,
     ctx: ClientContext,
     msg: Extract<SignalingMessage, { type: "hello"; role: "camera" }>,
-  ): void {
+  ): Promise<void> {
     if (!validatePairingCode(state, msg.pairingCode)) {
       send(ws, { type: "hello-ack", paired: false, reason: "bad-pairing-code" });
       try {
@@ -186,6 +188,12 @@ export function attachSignaling(
     if (autoAccept) {
       const updated = setCameraStatus(state, cam.sessionId, "accepted");
       if (updated) {
+        if (bridgeClient) {
+          const allocation = await bridgeClient.allocateCamera(updated);
+          if (allocation) {
+            updated.bridge = allocation;
+          }
+        }
         send(ws, { type: "accepted", sessionId: cam.sessionId });
         broadcastCameraUpdate(updated);
       }
@@ -252,7 +260,7 @@ export function attachSignaling(
       switch (msg.type) {
         case "hello": {
           if (msg.role === "camera") {
-            handleHelloCamera(ws, ctx, msg);
+            void handleHelloCamera(ws, ctx, msg);
           } else if (msg.role === "viewer") {
             handleHelloViewer(ws, ctx, msg);
           } else {
@@ -283,6 +291,33 @@ export function attachSignaling(
           if (ctx.role === "camera") {
             const cam = state.cameras.get(targetSession);
             if (!cam || cam.status === "pending" || cam.status === "disconnected") {
+              return;
+            }
+            if (bridgeClient && cam.bridge) {
+              if (msg.type === "offer" && msg.sdp?.sdp) {
+                void bridgeClient?.publishOffer(cam, msg.sdp.sdp).then((answer) => {
+                  if (!answer) {
+                    const updated = setCameraStatus(state, targetSession, "accepted");
+                    if (updated) broadcastCameraUpdate(updated);
+                    send(ws, {
+                      type: "error",
+                      message: "bridge WHIP ingest failed; RTSP stream not available",
+                    });
+                    return;
+                  }
+                  send(ws, {
+                    type: "answer",
+                    sessionId: targetSession,
+                    sdp: answer,
+                  });
+                  const updated = setCameraStatus(state, targetSession, "streaming");
+                  if (updated) broadcastCameraUpdate(updated);
+                });
+              }
+              if (msg.type === "ice") {
+                // TODO(knoxnet-vms): add WHIP PATCH trickle support if the
+                // browser offer cannot include enough gathered ICE candidates.
+              }
               return;
             }
             if (msg.type === "offer") {

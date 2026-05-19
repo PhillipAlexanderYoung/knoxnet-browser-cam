@@ -99,10 +99,31 @@ export class CameraPeer {
       offerToReceiveVideo: false,
     });
     await this.pc.setLocalDescription(offer);
+    await this.waitForIceGatheringComplete(3000);
     this.opts.signaling.send({
       type: "offer",
       sessionId: this.opts.sessionId,
-      sdp: { type: offer.type, sdp: offer.sdp },
+      sdp: {
+        type: this.pc.localDescription?.type ?? offer.type,
+        sdp: this.pc.localDescription?.sdp ?? offer.sdp,
+      },
+    });
+  }
+
+  private async waitForIceGatheringComplete(timeoutMs: number): Promise<void> {
+    if (this.pc.iceGatheringState === "complete") return;
+    await new Promise<void>((resolve) => {
+      let timeout = 0;
+      const cleanup = () => {
+        window.clearTimeout(timeout);
+        this.pc.removeEventListener("icegatheringstatechange", onStateChange);
+        resolve();
+      };
+      const onStateChange = () => {
+        if (this.pc.iceGatheringState === "complete") cleanup();
+      };
+      timeout = window.setTimeout(cleanup, timeoutMs);
+      this.pc.addEventListener("icegatheringstatechange", onStateChange);
     });
   }
 

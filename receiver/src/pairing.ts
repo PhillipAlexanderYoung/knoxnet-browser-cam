@@ -26,6 +26,15 @@ export interface CameraRecord {
   name: string;
   status: CameraStatus;
   capabilities: CameraCapabilities;
+  bridge?: {
+    cameraId: string;
+    name: string;
+    path: string;
+    rtspUrl: string;
+    whipUrl?: string;
+    ingestStatus?: "allocated" | "publishing" | "error";
+    lastError?: string;
+  };
   createdAt: string;
   lastSeen: string;
   remoteAddress?: string;

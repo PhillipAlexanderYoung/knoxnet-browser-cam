@@ -13,6 +13,7 @@ import {
   removeCamera,
   setCameraStatus,
 } from "./pairing.js";
+import { createBridgeClient } from "./bridge-client.js";
 import { attachSignaling } from "./signaling.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -28,6 +29,7 @@ const RECEIVER_NAME =
 const PUBLIC_HOST = process.env.PUBLIC_HOST ?? detectLanIp() ?? "localhost";
 const AUTO_ACCEPT =
   (process.env.AUTO_ACCEPT ?? "false").toLowerCase() === "true";
+const BRIDGE_URL = process.env.BRIDGE_URL?.replace(/\/+$/, "");
 
 const state = createPairingState(process.env.PAIRING_CODE);
 
@@ -57,6 +59,7 @@ function pairingUrl(): string {
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "256kb" }));
+const bridgeClient = createBridgeClient(BRIDGE_URL, log);
 
 app.get("/api/info", (_req: Request, res: Response) => {
   res.json({
@@ -68,6 +71,7 @@ app.get("/api/info", (_req: Request, res: Response) => {
     pairingCode: state.code,
     pairingUrl: pairingUrl(),
     autoAccept: AUTO_ACCEPT,
+    bridgeUrl: BRIDGE_URL,
     ts: new Date().toISOString(),
   });
 });
@@ -76,12 +80,18 @@ app.get("/api/cameras", (_req: Request, res: Response) => {
   res.json({ cameras: listCameras(state) });
 });
 
-app.post("/api/cameras/:id/accept", (req: Request, res: Response) => {
+app.post("/api/cameras/:id/accept", async (req: Request, res: Response) => {
   const id = req.params.id;
   const cam = setCameraStatus(state, id, "accepted");
   if (!cam) {
     res.status(404).json({ ok: false, error: "not-found" });
     return;
+  }
+  if (bridgeClient) {
+    const allocation = await bridgeClient.allocateCamera(cam);
+    if (allocation) {
+      cam.bridge = allocation;
+    }
   }
   const delivered = signaling.sendToCamera(id, {
     type: "accepted",
@@ -91,10 +101,13 @@ app.post("/api/cameras/:id/accept", (req: Request, res: Response) => {
   res.json({ ok: true, camera: cam, delivered });
 });
 
-app.delete("/api/cameras/:id", (req: Request, res: Response) => {
+app.delete("/api/cameras/:id", async (req: Request, res: Response) => {
   const id = req.params.id;
   signaling.closeCameraSocket(id, 1000, "removed");
   const removed = removeCamera(state, id);
+  if (bridgeClient) {
+    await bridgeClient.removeCamera(id);
+  }
   signaling.broadcastCameraList();
   res.json({ ok: removed });
 });
@@ -131,6 +144,7 @@ const signaling = attachSignaling(wss, {
   state,
   log,
   autoAccept: AUTO_ACCEPT,
+  bridgeClient,
 });
 
 httpServer.listen(PORT, HOST, () => {
@@ -142,6 +156,11 @@ httpServer.listen(PORT, HOST, () => {
   log(`Open this URL on the phone (must be on the same LAN).`);
   if (AUTO_ACCEPT) log("AUTO_ACCEPT=true: cameras will be auto-accepted on hello.");
   log(`Dashboard:    http://${PUBLIC_HOST}:${PORT}/`);
+  if (BRIDGE_URL) {
+    log(`Bridge API:   ${BRIDGE_URL}`);
+  } else {
+    log("Bridge API:   disabled (set BRIDGE_URL=http://localhost:8790)");
+  }
   log(`From now on, the pairing code is redacted: ${redactCode(state.code)}`);
 
   // Also emit a textual QR to the console for convenience.
@@ -167,6 +186,5 @@ function shutdown(signal: string): void {
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-// TODO(knoxnet-vms): When a camera reaches `streaming` status, a future
-// bridge could hand the inbound WebRTC track to a restreamer such as
-// mediamtx (WHIP ingest -> RTSP egress). See docs/knoxnet-vms-integration.md.
+// TODO(knoxnet-vms): Knoxnet VMS can later own BRIDGE_URL discovery/lifecycle
+// and ingest the camera.bridge.rtspUrl values as managed RTSP camera sources.
