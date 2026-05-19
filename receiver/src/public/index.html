@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Knoxnet Browser Cam — Receiver</title>
+    <link rel="stylesheet" href="/dashboard.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <header class="header">
+        <div class="brand">
+          <div class="logo">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none">
+              <path
+                d="M12 2.5 3.5 6v6c0 5.2 3.6 8.6 8.5 9.9 4.9-1.3 8.5-4.7 8.5-9.9V6L12 2.5z"
+                stroke="#22C55E"
+                stroke-width="1.75"
+                stroke-linejoin="round"
+                fill="rgba(34,197,94,0.12)"
+              />
+              <text
+                x="12"
+                y="15"
+                text-anchor="middle"
+                font-family="-apple-system, Inter, system-ui, sans-serif"
+                font-weight="700"
+                font-size="9"
+                fill="#22C55E"
+              >K</text>
+            </svg>
+          </div>
+          <div>
+            <div class="brand__title">KNOXNET BROWSER CAM — RECEIVER</div>
+            <div class="brand__sub" id="receiver-name">…</div>
+          </div>
+        </div>
+        <div class="status" id="status-pill">
+          <span class="status__dot"></span><span id="status-text">Connecting</span>
+        </div>
+      </header>
+
+      <section class="grid">
+        <div class="card pairing-card">
+          <div class="card__title">PAIRING</div>
+          <div class="pairing">
+            <div class="pairing__code-block">
+              <div class="caps muted">Pairing code</div>
+              <div class="pairing__code" id="pairing-code">––––––</div>
+              <div class="caps muted">Pairing URL</div>
+              <div class="pairing__url" id="pairing-url">…</div>
+              <button class="btn btn--ghost" id="copy-url">Copy URL</button>
+            </div>
+            <div class="pairing__qr">
+              <img alt="Pairing QR" id="pairing-qr" />
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card__title">CAMERAS</div>
+          <div id="cameras" class="cameras">
+            <div class="empty">No cameras connected yet. Scan the QR with your phone.</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="viewer-section" class="card viewer hidden">
+        <div class="card__title">
+          <span>LIVE VIEWER</span>
+          <button class="btn btn--ghost" id="close-viewer">Close</button>
+        </div>
+        <div class="viewer__body">
+          <video id="viewer-video" autoplay playsinline></video>
+          <div class="viewer__meta" id="viewer-meta"></div>
+        </div>
+      </section>
+    </div>
+
+    <script src="/dashboard.js" type="module"></script>
+  </body>
+</html>
