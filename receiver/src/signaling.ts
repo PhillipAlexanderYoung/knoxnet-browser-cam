@@ -201,6 +201,53 @@ export function attachSignaling(
     for (const ws of set) send(ws, msg);
   }
 
+  async function removeSupersededDeviceSessions(
+    deviceId: string | undefined,
+    nextSocket: WebSocket,
+  ): Promise<string | undefined> {
+    if (!deviceId) return undefined;
+    const matches = Array.from(state.cameras.values()).filter(
+      (cam) => cam.deviceId === deviceId,
+    );
+    const primary = matches[0];
+    for (const cam of matches) {
+      const previousSocket = cameraSockets.get(cam.sessionId);
+      if (previousSocket && previousSocket !== nextSocket) {
+        try {
+          previousSocket.close(1000, "replaced-by-reconnect");
+        } catch {
+          // ignore
+        }
+        cameraSockets.delete(cam.sessionId);
+      }
+      const viewers = viewerSockets.get(cam.sessionId);
+      if (viewers) {
+        for (const viewer of viewers) {
+          send(viewer, { type: "bye", sessionId: cam.sessionId });
+          try {
+            viewer.close(1000, "camera-reconnected");
+          } catch {
+            // ignore
+          }
+        }
+        viewerSockets.delete(cam.sessionId);
+      }
+      if (cam.sessionId !== primary?.sessionId) {
+        removeCamera(state, cam.sessionId);
+      }
+      if (bridgeClient) await bridgeClient.removeCamera(cam.sessionId);
+      emitEvent({
+        type: "reconnect",
+        sessionId: cam.sessionId,
+        deviceId,
+        name: cam.name,
+        message: "Previous camera session replaced by reconnect",
+        reason: "replaced-by-reconnect",
+      });
+    }
+    return primary?.sessionId;
+  }
+
   async function handleHelloCamera(
     ws: WebSocket,
     ctx: ClientContext,
@@ -224,11 +271,13 @@ export function attachSignaling(
       return;
     }
     const knownBefore = knownDevices.get(msg.deviceId);
+    const replaceSessionId = await removeSupersededDeviceSessions(msg.deviceId, ws);
     const cam = registerCamera(state, {
       name: msg.name ?? "",
       deviceId: msg.deviceId,
       capabilities: msg.capabilities ?? {},
       remoteAddress: ctx.remoteAddress,
+      replaceSessionId,
     });
     const known = msg.deviceId
       ? knownDevices.upsertSeen({
@@ -238,28 +287,15 @@ export function attachSignaling(
         })
       : undefined;
     cam.trusted = known?.trusted;
-    const previousSessionId = knownBefore?.lastSessionId;
+    const previousSessionId = replaceSessionId ?? knownBefore?.lastSessionId;
     if (previousSessionId && previousSessionId !== cam.sessionId) {
-      const previousSocket = cameraSockets.get(previousSessionId);
-      if (previousSocket && previousSocket !== ws) {
-        try {
-          previousSocket.close(1000, "replaced-by-reconnect");
-        } catch {
-          // ignore
-        }
-        cameraSockets.delete(previousSessionId);
-      }
-      if (state.cameras.has(previousSessionId)) {
-        removeCamera(state, previousSessionId);
-        if (bridgeClient) void bridgeClient.removeCamera(previousSessionId);
-      }
       emitEvent({
         type: "reconnect",
         sessionId: cam.sessionId,
         deviceId: msg.deviceId,
         name: cam.name,
-        message: "Known device reconnected with a new session",
-        reason: "replaced-previous-session",
+        message: `Known device reconnected (${cam.reconnectCount ?? 1} total)`,
+        reason: "replaced-by-reconnect",
       });
     }
     ctx.role = "camera";

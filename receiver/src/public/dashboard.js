@@ -139,6 +139,7 @@ function renderCameras() {
           status: ${escapeHtml(cam.status)} • session: ${escapeHtml(cam.sessionId.slice(0, 6))}
           ${cam.deviceId ? "• device: " + escapeHtml(cam.deviceId.slice(0, 8)) : ""}
           ${known?.trusted || cam.trusted ? "• trusted" : ""}
+          ${cam.reconnectCount ? "• reconnects: " + escapeHtml(cam.reconnectCount) : ""}
           ${cam.remoteAddress ? "• " + escapeHtml(cam.remoteAddress) : ""}
           ${capBits.length ? "• " + capBits.join(", ") : ""}
           ${bridge ? "• bridge: " + escapeHtml(bridge) : ""}

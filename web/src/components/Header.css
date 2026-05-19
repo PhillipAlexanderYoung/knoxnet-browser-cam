@@ -8,15 +8,6 @@
 .topbar__brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.topbar__logo {
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .topbar__title {

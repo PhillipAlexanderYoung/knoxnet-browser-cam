@@ -43,6 +43,7 @@ export interface CameraRecord {
   disconnectReason?: string;
   trusted?: boolean;
   autoAccepted?: boolean;
+  reconnectCount?: number;
   remoteAddress?: string;
 }
 
@@ -83,18 +84,23 @@ export function registerCamera(
     deviceId?: string;
     capabilities: CameraCapabilities;
     remoteAddress?: string;
+    replaceSessionId?: string;
   },
 ): CameraRecord {
   const sessionId = newSessionId();
   const now = new Date().toISOString();
+  const previous =
+    params.replaceSessionId ? state.cameras.get(params.replaceSessionId) : undefined;
+  if (previous) state.cameras.delete(previous.sessionId);
   const record: CameraRecord = {
     sessionId,
     deviceId: params.deviceId,
-    name: params.name || `phone-cam-${sessionId.slice(0, 4)}`,
+    name: params.name || previous?.name || `phone-cam-${sessionId.slice(0, 4)}`,
     status: "pending",
     capabilities: params.capabilities ?? {},
-    createdAt: now,
+    createdAt: previous?.createdAt ?? now,
     lastSeen: now,
+    reconnectCount: previous ? (previous.reconnectCount ?? 0) + 1 : 0,
     remoteAddress: params.remoteAddress,
   };
   state.cameras.set(sessionId, record);
