@@ -9,6 +9,7 @@ import { Toggle } from "../common/Toggle";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { BottomSheet, SheetOption } from "../common/BottomSheet";
 import type { CameraSettings } from "../../storage/storage";
+import type { ConnectionState } from "../../webrtc/signaling-client";
 import {
   BITRATE_OPTIONS,
   FRAME_RATE_OPTIONS,
@@ -43,14 +44,7 @@ interface NetworkPageProps {
   onSave: () => void;
   onBack: () => void;
   receiverInfo: ReceiverInfo | null;
-  signalingState:
-    | "idle"
-    | "connecting"
-    | "searching"
-    | "paired"
-    | "streaming"
-    | "error"
-    | "disconnected";
+  signalingState: ConnectionState;
 }
 
 const RESOLUTION_OPTS: { value: ResolutionKey; label: string }[] = [
@@ -94,6 +88,7 @@ export function NetworkPage({
       case "streaming":
         return "Streaming";
       case "paired":
+      case "negotiating":
       case "searching":
       case "connecting":
         return "Paired";

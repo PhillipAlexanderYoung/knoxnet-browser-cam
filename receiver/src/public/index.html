@@ -57,6 +57,7 @@
                 fills the receiver and pairing code, and starts as far as iOS allows.
               </div>
               <div class="bridge-status" id="bridge-status">Bridge status loading…</div>
+              <div class="bridge-status" id="accept-mode">Accept policy loading…</div>
               <button class="btn btn--ghost" id="copy-url">Copy URL</button>
             </div>
             <div class="pairing__qr">
@@ -68,9 +69,29 @@
         </div>
 
         <div class="card">
-          <div class="card__title">CAMERAS</div>
+          <div class="card__title">
+            <span>CAMERAS</span>
+            <button class="btn btn--ghost btn--small" id="clear-stale">Clear stale</button>
+          </div>
+          <div class="counts" id="camera-counts"></div>
           <div id="cameras" class="cameras">
             <div class="empty">No cameras connected yet. Scan the QR with your phone.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid grid--secondary">
+        <div class="card">
+          <div class="card__title">KNOWN DEVICES</div>
+          <div id="known-devices" class="known-devices">
+            <div class="empty">Trusted phones will appear after first pairing.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card__title">RECENT EVENTS</div>
+          <div id="events" class="events">
+            <div class="empty">No connection events yet.</div>
           </div>
         </div>
       </section>

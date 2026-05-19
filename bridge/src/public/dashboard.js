@@ -103,7 +103,8 @@ function renderThumb(cam) {
 
 function statusPill(cam) {
   const status = cameraStatus(cam);
-  return `<span class="pill pill--${escapeAttr(status)}">${escapeHtml(status)}</span>`;
+  const label = status === "allocated" ? "allocated-no-media" : status;
+  return `<span class="pill pill--${escapeAttr(status)}">${escapeHtml(label)}</span>`;
 }
 
 function actionButtons(cam) {
@@ -112,7 +113,7 @@ function actionButtons(cam) {
   return `
     <div class="actions">
       <button class="btn btn--primary" type="button" data-action="detail" data-id="${id}">Open</button>
-      <button class="btn btn--ghost" type="button" data-action="copy-rtsp" data-id="${id}">Copy RTSP</button>
+      <button class="btn btn--ghost" type="button" data-action="copy-rtsp" data-id="${id}">${cameraStatus(cam) === "publishing" ? "Copy RTSP" : "Copy RTSP (not live)"}</button>
       ${url ? `<button class="btn btn--ghost" type="button" data-action="open-preview" data-id="${id}">Preview URL</button>` : ""}
       <button class="btn btn--danger" type="button" data-action="delete" data-id="${id}">Remove</button>
     </div>
@@ -225,7 +226,12 @@ async function refresh() {
     ]);
     state.health = health;
     state.cameras = list.cameras || [];
-    el("bridge-subtitle").textContent = `${location.origin}/ - ${health.mediamtx?.running ? "managed MediaMTX running" : "MediaMTX external or stopped"}`;
+    const mediaMtxState = health.mediamtx?.apiReachable
+      ? "MediaMTX API reachable"
+      : health.mediamtx?.running
+        ? "MediaMTX starting"
+        : "MediaMTX unavailable";
+    el("bridge-subtitle").textContent = `${location.origin}/ - ${mediaMtxState} - ${health.mediamtx?.binary || "mediamtx"}`;
     setStatus("Connected", "connected");
     render();
   } catch (err) {

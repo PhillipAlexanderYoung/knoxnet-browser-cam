@@ -1,4 +1,5 @@
 import os from "node:os";
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 export interface BridgeConfig {
@@ -60,7 +61,7 @@ export function loadConfig(): BridgeConfig {
     publicHost,
     runtimeDir,
     manageMediaMtx: envBool("MEDIAMTX_MANAGE_PROCESS", true),
-    mediaMtxBinary: process.env.MEDIAMTX_BINARY ?? "mediamtx",
+    mediaMtxBinary: process.env.MEDIAMTX_BINARY ?? defaultMediaMtxBinary(),
     mediaMtxConfigPath:
       process.env.MEDIAMTX_CONFIG_PATH ??
       path.join(runtimeDir, "mediamtx.yml"),
@@ -76,6 +77,15 @@ export function loadConfig(): BridgeConfig {
       .map((host) => host.trim())
       .filter(Boolean),
   };
+}
+
+function defaultMediaMtxBinary(): string {
+  const candidates = [
+    path.resolve(process.cwd(), "..", "Knoxnet-VMS", "mediamtx", "mediamtx"),
+    path.resolve(process.cwd(), "..", "..", "Knoxnet-VMS", "mediamtx", "mediamtx"),
+    "/home/operator1/Documents/Knoxnet-VMS/mediamtx/mediamtx",
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? "mediamtx";
 }
 
 export function socketAddress(host: string, port: number): string {

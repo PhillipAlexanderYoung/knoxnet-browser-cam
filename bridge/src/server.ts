@@ -109,6 +109,7 @@ async function handleWhipRelay(
   }
 
   try {
+    log(`WHIP offer received cameraId=${cameraId} path=${camera.path}`);
     const upstream = await fetch(camera.whipUrl, {
       method: "POST",
       headers: {
@@ -123,6 +124,7 @@ async function handleWhipRelay(
     }
     const location = upstream.headers.get("location") ?? undefined;
     registry.markPublishing(cameraId, { whipSessionUrl: location });
+    log(`WHIP publish accepted cameraId=${cameraId} rtsp=${camera.rtspUrl}`);
     json(res, 200, {
       ok: true,
       camera: registry.get(cameraId),
@@ -132,6 +134,7 @@ async function handleWhipRelay(
   } catch (err) {
     const message = (err as Error)?.message ?? "whip-relay-failed";
     registry.markError(cameraId, message);
+    log(`WHIP publish failed cameraId=${cameraId}: ${message}`);
     json(res, 502, { ok: false, error: "whip-relay-failed", detail: message });
   }
 }
@@ -192,6 +195,7 @@ const server = createServer(async (req, res) => {
         name: body.name,
         pathHint: body.pathHint,
       });
+      log(`allocated cameraId=${camera.cameraId} path=${camera.path} rtsp=${camera.rtspUrl}`);
       json(res, 200, { ok: true, camera });
       return;
     }

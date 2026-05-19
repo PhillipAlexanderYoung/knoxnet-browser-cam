@@ -9,6 +9,7 @@ import { TabBar, type TabKey } from "./components/TabBar";
 import { Toast } from "./components/common/Toast";
 import {
   DEFAULT_SETTINGS,
+  getOrCreateDeviceId,
   loadSettings,
   saveSettings,
   type CameraSettings,
@@ -59,6 +60,7 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [receiverInfo, setReceiverInfo] = useState<ReceiverInfo | null>(null);
   const [autoStart] = useState(urlWantsAutostart);
+  const [clientDeviceId] = useState(getOrCreateDeviceId);
   const api = useCameraStream();
 
   // Persist initial URL-derived settings (so they survive a reload).
@@ -129,6 +131,7 @@ export default function App() {
           JSON.stringify({
             type: "announce",
             name: settings.cameraName,
+            deviceId: clientDeviceId,
             pairingCode: settings.pairingCode,
             discoverable: true,
           }),
@@ -153,6 +156,7 @@ export default function App() {
     settings.receiverUrl,
     settings.pairingCode,
     settings.cameraName,
+    clientDeviceId,
   ]);
 
   // Wake lock while streaming
@@ -223,6 +227,7 @@ export default function App() {
           receiverName={receiverName}
           onChangeAudio={onChangeAudio}
           autoStart={autoStart}
+          clientDeviceId={clientDeviceId}
         />
       )}
       {tab === "network" && (

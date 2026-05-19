@@ -3,6 +3,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import {
   listCameras,
   registerCamera,
+  removeCamera,
   setCameraStatus,
   touchCamera,
   validatePairingCode,
@@ -11,6 +12,8 @@ import {
   type PairingState,
 } from "./pairing.js";
 import type { BridgeAllocation, BridgeClient } from "./bridge-client.js";
+import type { EventLog, ReceiverEvent } from "./events.js";
+import type { KnownDeviceStore } from "./known-devices.js";
 
 // Message envelopes traveling over the signaling WebSocket.
 // Kept loose on intent (role-specific shape) but typed at the union level.
@@ -19,6 +22,7 @@ export type SignalingMessage =
       type: "hello";
       role: "camera";
       name?: string;
+      deviceId?: string;
       pairingCode: string;
       capabilities?: CameraCapabilities;
     }
@@ -41,7 +45,15 @@ export type SignalingMessage =
   | { type: "bye"; sessionId: string }
   | { type: "camera-list"; cameras: CameraRecord[] }
   | { type: "camera-update"; camera: CameraRecord }
-  | { type: "announce"; name?: string; pairingCode: string; discoverable: boolean }
+  | { type: "event-log"; events: ReceiverEvent[] }
+  | { type: "event"; event: ReceiverEvent }
+  | {
+      type: "announce";
+      name?: string;
+      deviceId?: string;
+      pairingCode: string;
+      discoverable: boolean;
+    }
   | { type: "error"; message: string }
   | { type: "ping" }
   | { type: "pong" };
@@ -73,8 +85,12 @@ interface ClientContext {
 interface ServerDeps {
   state: PairingState;
   log: (...args: unknown[]) => void;
-  autoAccept?: boolean;
+  autoAcceptAll?: boolean;
+  autoAcceptKnown?: boolean;
   bridgeClient?: BridgeClient | null;
+  knownDevices: KnownDeviceStore;
+  eventLog: EventLog;
+  emitEvent: (event: Omit<ReceiverEvent, "id" | "ts">) => ReceiverEvent;
 }
 
 export interface SignalingHandle {
@@ -82,13 +98,23 @@ export interface SignalingHandle {
   broadcastCameraUpdate: (cam: CameraRecord) => void;
   sendToCamera: (sessionId: string, msg: SignalingMessage) => boolean;
   closeCameraSocket: (sessionId: string, code?: number, reason?: string) => void;
+  broadcastEvent: (event: ReceiverEvent) => void;
 }
 
 export function attachSignaling(
   wss: WebSocketServer,
   deps: ServerDeps,
 ): SignalingHandle {
-  const { state, log, autoAccept, bridgeClient } = deps;
+  const {
+    state,
+    log,
+    autoAcceptAll,
+    autoAcceptKnown,
+    bridgeClient,
+    knownDevices,
+    eventLog,
+    emitEvent,
+  } = deps;
   const clients = new WeakMap<WebSocket, ClientContext>();
   // Keep an indexable list so we can match camera <-> viewer pairs by sessionId.
   const cameraSockets = new Map<string, WebSocket>();
@@ -122,6 +148,14 @@ export function attachSignaling(
     }
   }
 
+  function broadcastEvent(event: ReceiverEvent): void {
+    const msg: SignalingMessage = { type: "event", event };
+    for (const ws of allViewerLobbySockets) send(ws, msg);
+    for (const set of viewerSockets.values()) {
+      for (const ws of set) send(ws, msg);
+    }
+  }
+
   function applyBridgeUpdate(cam: CameraRecord, bridge?: BridgeAllocation): void {
     if (bridge) cam.bridge = bridge;
   }
@@ -131,8 +165,16 @@ export function attachSignaling(
     if (!ctx) return;
     if (ctx.role === "camera" && ctx.sessionId) {
       cameraSockets.delete(ctx.sessionId);
-      const cam = setCameraStatus(state, ctx.sessionId, "disconnected");
+      const cam = setCameraStatus(state, ctx.sessionId, "disconnected", "socket-closed");
       if (cam) broadcastCameraUpdate(cam);
+      emitEvent({
+        type: "disconnected",
+        sessionId: ctx.sessionId,
+        deviceId: cam?.deviceId,
+        name: cam?.name,
+        message: "Camera disconnected",
+        reason: "socket-closed",
+      });
       log(`camera disconnected sessionId=${ctx.sessionId}`);
     } else if (ctx.role === "viewer") {
       if (ctx.sessionId) {
@@ -172,34 +214,101 @@ export function attachSignaling(
         // ignore
       }
       log(`camera hello rejected (bad code) from ${ctx.remoteAddress}`);
+      emitEvent({
+        type: "rejected",
+        deviceId: msg.deviceId,
+        name: msg.name,
+        message: "Camera hello rejected",
+        reason: "bad-pairing-code",
+      });
       return;
     }
+    const knownBefore = knownDevices.get(msg.deviceId);
     const cam = registerCamera(state, {
       name: msg.name ?? "",
+      deviceId: msg.deviceId,
       capabilities: msg.capabilities ?? {},
       remoteAddress: ctx.remoteAddress,
     });
+    const known = msg.deviceId
+      ? knownDevices.upsertSeen({
+          deviceId: msg.deviceId,
+          name: cam.name,
+          sessionId: cam.sessionId,
+        })
+      : undefined;
+    cam.trusted = known?.trusted;
+    const previousSessionId = knownBefore?.lastSessionId;
+    if (previousSessionId && previousSessionId !== cam.sessionId) {
+      const previousSocket = cameraSockets.get(previousSessionId);
+      if (previousSocket && previousSocket !== ws) {
+        try {
+          previousSocket.close(1000, "replaced-by-reconnect");
+        } catch {
+          // ignore
+        }
+        cameraSockets.delete(previousSessionId);
+      }
+      if (state.cameras.has(previousSessionId)) {
+        removeCamera(state, previousSessionId);
+        if (bridgeClient) void bridgeClient.removeCamera(previousSessionId);
+      }
+      emitEvent({
+        type: "reconnect",
+        sessionId: cam.sessionId,
+        deviceId: msg.deviceId,
+        name: cam.name,
+        message: "Known device reconnected with a new session",
+        reason: "replaced-previous-session",
+      });
+    }
     ctx.role = "camera";
     ctx.sessionId = cam.sessionId;
     ctx.pairingValidated = true;
     cameraSockets.set(cam.sessionId, ws);
     send(ws, { type: "hello-ack", paired: true, sessionId: cam.sessionId });
     broadcastCameraList();
+    emitEvent({
+      type: "paired",
+      sessionId: cam.sessionId,
+      deviceId: cam.deviceId,
+      name: cam.name,
+      message: known ? "Known device paired" : "Camera paired",
+    });
     log(
       `camera hello accepted sessionId=${cam.sessionId} name="${cam.name}" remote=${ctx.remoteAddress}`,
     );
 
-    if (autoAccept) {
+    const shouldAutoAccept =
+      autoAcceptAll || (autoAcceptKnown && Boolean(known?.autoAccept || known?.trusted));
+    if (shouldAutoAccept) {
       const updated = setCameraStatus(state, cam.sessionId, "accepted");
       if (updated) {
+        updated.autoAccepted = true;
         if (bridgeClient) {
           const allocation = await bridgeClient.allocateCamera(updated);
           if (allocation) {
             updated.bridge = allocation;
+            emitEvent({
+              type: "bridge-allocated",
+              sessionId: cam.sessionId,
+              deviceId: cam.deviceId,
+              name: cam.name,
+              message: `Bridge path allocated: ${allocation.path}`,
+            });
           }
         }
         send(ws, { type: "accepted", sessionId: cam.sessionId, bridge: updated.bridge });
         broadcastCameraUpdate(updated);
+        emitEvent({
+          type: "accepted",
+          sessionId: cam.sessionId,
+          deviceId: cam.deviceId,
+          name: cam.name,
+          message: autoAcceptAll
+            ? "Camera auto-accepted by AUTO_ACCEPT_ALL"
+            : "Trusted known device auto-accepted",
+        });
       }
     }
   }
@@ -233,6 +342,7 @@ export function attachSignaling(
     }
     send(ws, { type: "hello-ack", paired: true, sessionId: msg.sessionId });
     send(ws, { type: "camera-list", cameras: listCameras(state) });
+    send(ws, { type: "event-log", events: eventLog.list() });
   }
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
@@ -276,7 +386,9 @@ export function attachSignaling(
           if (!validatePairingCode(state, msg.pairingCode)) return;
           // Announce just keeps the receiver aware a camera exists in the wild,
           // without yet establishing a media session. Currently a no-op beyond log.
-          log(`announce name="${msg.name ?? "(anon)"}" discoverable=${msg.discoverable}`);
+          log(
+            `announce name="${msg.name ?? "(anon)"}" deviceId="${msg.deviceId ?? ""}" discoverable=${msg.discoverable}`,
+          );
           return;
         }
         case "offer":
@@ -319,6 +431,14 @@ export function attachSignaling(
                       broadcastCameraUpdate(updated);
                     }
                     log(`bridge WHIP failed sessionId=${targetSession}: ${error}`);
+                    emitEvent({
+                      type: "bridge-failed",
+                      sessionId: targetSession,
+                      deviceId: cam.deviceId,
+                      name: cam.name,
+                      message: "Bridge WHIP ingest failed",
+                      reason: error,
+                    });
                     send(ws, {
                       type: "error",
                       message: error,
@@ -337,6 +457,13 @@ export function attachSignaling(
                     broadcastCameraUpdate(updated);
                   }
                   log(`stream connected sessionId=${targetSession} rtsp=${cam.bridge?.rtspUrl}`);
+                  emitEvent({
+                    type: "connected",
+                    sessionId: targetSession,
+                    deviceId: cam.deviceId,
+                    name: cam.name,
+                    message: "Camera stream connected",
+                  });
                 }).catch((err) => {
                   const error = (err as Error)?.message ?? String(err);
                   const updated = setCameraStatus(state, targetSession, "accepted");
@@ -346,6 +473,14 @@ export function attachSignaling(
                   }
                   if (updated) broadcastCameraUpdate(updated);
                   log(`bridge WHIP error sessionId=${targetSession}: ${error}`);
+                  emitEvent({
+                    type: "bridge-failed",
+                    sessionId: targetSession,
+                    deviceId: cam.deviceId,
+                    name: cam.name,
+                    message: "Bridge WHIP ingest errored",
+                    reason: error,
+                  });
                   send(ws, {
                     type: "error",
                     message: `bridge WHIP ingest failed: ${error}`,
@@ -367,6 +502,14 @@ export function attachSignaling(
               const updated = setCameraStatus(state, targetSession, "accepted");
               if (updated) broadcastCameraUpdate(updated);
               log(`stream disconnected sessionId=${targetSession}`);
+              emitEvent({
+                type: "disconnected",
+                sessionId: targetSession,
+                deviceId: updated?.deviceId,
+                name: updated?.name,
+                message: "Camera stream disconnected",
+                reason: "bye",
+              });
             }
             forwardToViewers(targetSession, msg);
             return;
@@ -378,6 +521,13 @@ export function attachSignaling(
               const updated = setCameraStatus(state, targetSession, "streaming");
               if (updated) broadcastCameraUpdate(updated);
               log(`dashboard answer forwarded sessionId=${targetSession}`);
+              emitEvent({
+                type: "connected",
+                sessionId: targetSession,
+                deviceId: updated?.deviceId,
+                name: updated?.name,
+                message: "Dashboard viewer connected",
+              });
             }
             if (msg.type === "ice") {
               log(`dashboard ICE forwarded sessionId=${targetSession}`);
@@ -460,5 +610,6 @@ export function attachSignaling(
     broadcastCameraUpdate,
     sendToCamera,
     closeCameraSocket,
+    broadcastEvent,
   };
 }

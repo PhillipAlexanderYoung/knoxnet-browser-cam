@@ -68,6 +68,16 @@ together:
 | receiver | https://<lan-ip>:8787           | Dashboard + WSS signaling + /api |
 | web      | https://<lan-ip>:5173           | The phone-side UI (Vite HTTPS)   |
 
+On this development machine, MediaMTX is available at:
+
+```bash
+MEDIAMTX_BINARY="/home/operator1/Documents/Knoxnet-VMS/mediamtx/mediamtx" npm run dev:all
+```
+
+The bridge also auto-detects that path. Run `npm run doctor` if RTSP does not
+come up; an RTSP URL is playable only after the bridge ingest status says
+`publishing`.
+
 Open the receiver dashboard on the desktop:
 
 ```bash
@@ -155,9 +165,11 @@ Use that address as `<lan-ip>` everywhere below.
    `npm run dev:all`, the receiver already has
    `BRIDGE_URL=http://localhost:8790`, so it allocates a MediaMTX path and shows
    the RTSP URL after accept.
-5. **RTSP clients / Knoxnet VMS:** add the displayed
+5. **RTSP clients / Knoxnet VMS:** wait until the dashboard shows bridge
+   ingest `publishing`, then add the displayed
    `rtsp://<host>:8554/<camera-slug>` URL. The phone still does not host RTSP;
-   MediaMTX does.
+   MediaMTX does. If the status is `allocated-no-media` or `error`, VLC will not
+   have a playable stream yet.
 
 ## Standalone bridge mode
 
@@ -202,10 +214,11 @@ Important bridge environment variables:
 
 Current RTSP status: the bridge implements path allocation, MediaMTX config
 generation/process management, receiver-side WHIP relay, and dashboard RTSP URL
-display. A complete end-to-end RTSP stream requires a MediaMTX binary available
-on `PATH` (or `MEDIAMTX_BINARY`) and a browser/MediaMTX codec/ICE combination
-that succeeds with gathered SDP candidates. WHIP trickle-ICE PATCH support is
-marked as follow-up in code.
+display. The receiver marks cameras `negotiating` while the WHIP offer is being
+posted to MediaMTX and only marks the bridge `publishing` after MediaMTX returns
+an answer. A complete end-to-end RTSP stream requires a MediaMTX binary available
+on `PATH`, in `/home/operator1/Documents/Knoxnet-VMS/mediamtx/mediamtx`, or via
+`MEDIAMTX_BINARY`. WHIP trickle-ICE PATCH support is marked as follow-up in code.
 
 ## HTTPS caveat (important for phones)
 
@@ -249,6 +262,7 @@ front both ports with a single HTTPS origin. Out of scope here; see Caddy's
 | `npm run dev:cert` | Creates/reuses `.cert/knoxnet-dev.*` for local HTTPS/WSS.                   |
 | `npm run bridge`   | Just the bridge (`tsx watch src/server.ts`).                                |
 | `npm run dev:bridge` | Alias for the bridge dev server.                                          |
+| `npm run doctor`   | Prints MediaMTX detection and RTSP health check commands.                  |
 | `npm run dev:https`| Runs WSS receiver and HTTPS Vite app without the RTSP bridge.                |
 | `npm run receiver:dev-phone` | Just the WSS receiver with phone-app URL defaults for `https://<lan-ip>:5173`. |
 | `npm run receiver` | Just the receiver (`tsx watch src/server.ts`); set `PHONE_APP_URL` if the phone app is not on the default derived origin. |

@@ -24,6 +24,7 @@ export interface CameraCapabilities {
 
 export interface CameraRecord {
   sessionId: string;
+  deviceId?: string;
   name: string;
   status: CameraStatus;
   capabilities: CameraCapabilities;
@@ -38,6 +39,10 @@ export interface CameraRecord {
   };
   createdAt: string;
   lastSeen: string;
+  disconnectedAt?: string;
+  disconnectReason?: string;
+  trusted?: boolean;
+  autoAccepted?: boolean;
   remoteAddress?: string;
 }
 
@@ -75,6 +80,7 @@ export function registerCamera(
   state: PairingState,
   params: {
     name: string;
+    deviceId?: string;
     capabilities: CameraCapabilities;
     remoteAddress?: string;
   },
@@ -83,6 +89,7 @@ export function registerCamera(
   const now = new Date().toISOString();
   const record: CameraRecord = {
     sessionId,
+    deviceId: params.deviceId,
     name: params.name || `phone-cam-${sessionId.slice(0, 4)}`,
     status: "pending",
     capabilities: params.capabilities ?? {},
@@ -104,11 +111,19 @@ export function setCameraStatus(
   state: PairingState,
   sessionId: string,
   status: CameraStatus,
+  reason?: string,
 ): CameraRecord | undefined {
   const cam = state.cameras.get(sessionId);
   if (!cam) return undefined;
   cam.status = status;
   cam.lastSeen = new Date().toISOString();
+  if (status === "disconnected") {
+    cam.disconnectedAt = cam.lastSeen;
+    cam.disconnectReason = reason;
+  } else {
+    delete cam.disconnectedAt;
+    delete cam.disconnectReason;
+  }
   return cam;
 }
 

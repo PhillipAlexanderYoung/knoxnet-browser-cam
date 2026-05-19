@@ -73,6 +73,7 @@ export interface StartParams {
   receiverUrl: string;
   pairingCode: string;
   name: string;
+  clientDeviceId: string;
   resolution: ResolutionKey;
   frameRate: FrameRate;
   audioEnabled: boolean;
@@ -307,6 +308,18 @@ export function useCameraStream(): CameraStreamApi {
   const start = useCallback(
     async (params: StartParams): Promise<void> => {
       setError(null);
+      if (negotiationTimeoutRef.current != null) {
+        window.clearTimeout(negotiationTimeoutRef.current);
+        negotiationTimeoutRef.current = null;
+      }
+      if (statsIntervalRef.current != null) {
+        window.clearInterval(statsIntervalRef.current);
+        statsIntervalRef.current = null;
+      }
+      peerRef.current?.destroy();
+      peerRef.current = null;
+      signalingRef.current?.close();
+      signalingRef.current = null;
       const unsupportedReason =
         cameraAccessError ?? getCameraAccessErrorMessage();
       if (unsupportedReason) {
@@ -350,6 +363,7 @@ export function useCameraStream(): CameraStreamApi {
               type: "hello",
               role: "camera",
               name: params.name,
+              deviceId: params.clientDeviceId,
               pairingCode: params.pairingCode,
               capabilities: caps,
             });

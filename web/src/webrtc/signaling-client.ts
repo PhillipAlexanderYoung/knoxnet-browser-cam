@@ -41,12 +41,14 @@ export type OutgoingMessage =
       type: "hello";
       role: "camera";
       name: string;
+      deviceId: string;
       pairingCode: string;
       capabilities: CameraCapabilities;
     }
   | {
       type: "announce";
       name: string;
+      deviceId: string;
       pairingCode: string;
       discoverable: boolean;
     }

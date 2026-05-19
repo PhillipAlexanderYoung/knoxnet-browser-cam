@@ -8,7 +8,9 @@ build/
 !.env.example
 .vite/
 .cert/
+.runtime/
 bridge/.runtime/
+receiver/data/
 coverage/
 *.tsbuildinfo
 .idea/

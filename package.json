@@ -14,6 +14,7 @@
     "dev:all": "npm run dev:cert && concurrently -k -n bridge,receiver,web -c green,blue,magenta \"npm:bridge\" \"BRIDGE_URL=http://localhost:8790 WSS=true PHONE_APP_SCHEME=https PHONE_APP_PORT=5173 npm run receiver\" \"npm:web:https\"",
     "dev:cert": "node scripts/ensure-dev-cert.mjs",
     "dev:bridge": "npm --workspace bridge run dev",
+    "doctor": "node scripts/doctor.mjs",
     "receiver:dev-phone": "npm run dev:cert && WSS=true PHONE_APP_SCHEME=https PHONE_APP_PORT=5173 npm run receiver",
     "receiver": "npm --workspace receiver run dev",
     "bridge": "npm --workspace bridge run dev",

@@ -19,6 +19,7 @@ interface CameraPageProps {
   receiverName: string | null;
   onChangeAudio: (next: boolean) => void;
   autoStart: boolean;
+  clientDeviceId: string;
 }
 
 function formatTrackBadge(settings: MediaTrackSettings | null): string | null {
@@ -110,12 +111,18 @@ export function CameraPage({
   receiverName,
   onChangeAudio,
   autoStart,
+  clientDeviceId,
 }: CameraPageProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [previewActive, setPreviewActive] = useState(false);
   const previewedFor = useRef<string>("");
   const autoStartAttempted = useRef(false);
+  const manualStopRef = useRef(false);
+  const hadActiveStreamRef = useRef(false);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const [reconnectDelayMs, setReconnectDelayMs] = useState<number | null>(null);
   const cameraAccessError = api.cameraAccessError;
 
   useEffect(() => {
@@ -184,12 +191,19 @@ export function CameraPage({
       setPermissionError(cameraAccessError);
       return;
     }
+    manualStopRef.current = false;
+    if (reconnectTimerRef.current != null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    setReconnectDelayMs(null);
     setPermissionError(null);
     try {
       await api.start({
         receiverUrl: settings.receiverUrl,
         pairingCode: settings.pairingCode,
         name: settings.cameraName,
+        clientDeviceId,
         resolution: settings.resolution,
         frameRate: settings.frameRate,
         audioEnabled: settings.audioEnabled,
@@ -200,16 +214,61 @@ export function CameraPage({
     } catch (err) {
       setPermissionError((err as Error)?.message ?? "Failed to start stream");
     }
-  }, [api, cameraAccessError, settings]);
+  }, [api, cameraAccessError, clientDeviceId, settings]);
 
   const handleRecordToggle = useCallback(async () => {
     if (api.state === "connecting" || api.state === "searching") return;
     if (api.state === "streaming" || api.state === "paired") {
+      manualStopRef.current = true;
+      reconnectAttemptRef.current = 0;
+      setReconnectDelayMs(null);
+      if (reconnectTimerRef.current != null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       await api.stop();
       return;
     }
     await startStreaming();
   }, [api, startStreaming]);
+
+  useEffect(() => {
+    if (api.state === "streaming") {
+      hadActiveStreamRef.current = true;
+      reconnectAttemptRef.current = 0;
+      setReconnectDelayMs(null);
+      return;
+    }
+    if (api.state !== "disconnected" && api.state !== "error") return;
+    if (!hadActiveStreamRef.current || manualStopRef.current) return;
+    if (!settings.receiverUrl || !settings.pairingCode) return;
+    if (reconnectTimerRef.current != null) return;
+    const attempt = reconnectAttemptRef.current + 1;
+    if (attempt > 5) {
+      setReconnectDelayMs(null);
+      return;
+    }
+    const delay = Math.min(1000 * 2 ** (attempt - 1), 8000);
+    reconnectAttemptRef.current = attempt;
+    setReconnectDelayMs(delay);
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectTimerRef.current = null;
+      void startStreaming();
+    }, delay);
+  }, [
+    api.state,
+    settings.receiverUrl,
+    settings.pairingCode,
+    startStreaming,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (reconnectTimerRef.current != null) {
+        window.clearTimeout(reconnectTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!autoStart || autoStartAttempted.current) return;
@@ -345,6 +404,32 @@ export function CameraPage({
               disabled={Boolean(cameraAccessError) || isConnecting}
             >
               {isConnecting ? "Connecting…" : "Allow camera and start streaming"}
+            </button>
+          </section>
+        )}
+
+      {(api.state === "disconnected" || api.state === "error") &&
+        hadActiveStreamRef.current &&
+        !manualStopRef.current && (
+          <section className="camera-callout camera-callout--compact" aria-live="polite">
+            <div className="camera-callout__title">
+              <Video size={16} />
+              Receiver connection dropped
+            </div>
+            <div className="camera-callout__body">
+              <p>
+                {reconnectDelayMs
+                  ? `Reconnecting in ${Math.ceil(reconnectDelayMs / 1000)}s.`
+                  : "Reconnect when the receiver is back."}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="camera-callout__button camera-callout__button--secondary"
+              onClick={() => void startStreaming()}
+              disabled={Boolean(cameraAccessError) || isConnecting}
+            >
+              Reconnect now
             </button>
           </section>
         )}

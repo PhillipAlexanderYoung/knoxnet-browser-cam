@@ -6,6 +6,7 @@ export interface MediaMtxStatus {
   managed: boolean;
   running: boolean;
   apiReachable: boolean;
+  binary: string;
   configPath: string;
   lastError?: string;
 }
@@ -72,6 +73,7 @@ export class MediaMtxManager {
       managed: this.config.manageMediaMtx,
       running: this.config.manageMediaMtx ? Boolean(this.child) : false,
       apiReachable: await this.isApiReachable(),
+      binary: this.config.mediaMtxBinary,
       configPath: this.config.mediaMtxConfigPath,
       lastError: this.lastError,
     };
@@ -138,18 +140,13 @@ apiAddress: ${socketAddress(config.mediaMtxApiHost, config.mediaMtxApiPort)}
 apiEncryption: no
 
 rtsp: yes
-rtspTransports: [udp, multicast, tcp]
 rtspAddress: ${socketAddress(config.mediaMtxBindHost, config.mediaMtxRtspPort)}
 
-rtmp: no
 hls: no
-srt: no
 
 webrtc: yes
 webrtcAddress: ${socketAddress(config.mediaMtxBindHost, config.mediaMtxWebRtcPort)}
 webrtcEncryption: no
-webrtcAllowOrigin: '*'
-webrtcTrustedProxies: []
 webrtcLocalUDPAddress: ${socketAddress(config.mediaMtxBindHost, config.mediaMtxWebRtcUdpPort)}
 webrtcLocalTCPAddress: ''
 webrtcIPsFromInterfaces: yes

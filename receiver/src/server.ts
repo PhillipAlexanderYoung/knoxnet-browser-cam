@@ -17,6 +17,8 @@ import {
 } from "./pairing.js";
 import { createBridgeClient } from "./bridge-client.js";
 import { attachSignaling } from "./signaling.js";
+import { createEventLog } from "./events.js";
+import { createKnownDeviceStore } from "./known-devices.js";
 import {
   buildReceiverUrls,
   httpScheme,
@@ -34,8 +36,12 @@ const PORT = Number(process.env.PORT ?? 8787);
 const RECEIVER_NAME =
   process.env.RECEIVER_NAME ?? `${os.hostname()}-knoxnet-receiver`;
 const PUBLIC_HOST = process.env.PUBLIC_HOST ?? detectLanIp() ?? "localhost";
-const AUTO_ACCEPT =
-  (process.env.AUTO_ACCEPT ?? "false").toLowerCase() === "true";
+const AUTO_ACCEPT_KNOWN =
+  (process.env.AUTO_ACCEPT_KNOWN ?? "true").toLowerCase() === "true";
+const AUTO_ACCEPT_ALL =
+  (process.env.AUTO_ACCEPT_ALL ?? process.env.AUTO_ACCEPT ?? "false").toLowerCase() ===
+  "true";
+const STALE_CAMERA_TTL_MS = Number(process.env.STALE_CAMERA_TTL_MS ?? 5 * 60_000);
 const BRIDGE_URL = process.env.BRIDGE_URL?.replace(/\/+$/, "");
 const USE_TLS =
   (process.env.WSS ?? process.env.HTTPS ?? "false").toLowerCase() === "true";
@@ -49,8 +55,15 @@ const TLS_KEY_PATH =
 const TLS_CERT_PATH =
   process.env.TLS_CERT_PATH ??
   path.resolve(__dirname, "..", "..", ".cert", "knoxnet-dev.crt");
+const RECEIVER_DATA_DIR =
+  process.env.RECEIVER_DATA_DIR ?? path.resolve(__dirname, "..", "data");
+const KNOWN_DEVICES_PATH =
+  process.env.KNOWN_DEVICES_PATH ??
+  path.join(RECEIVER_DATA_DIR, "known-devices.json");
 
 const state = createPairingState(process.env.PAIRING_CODE);
+const eventLog = createEventLog();
+const knownDevices = createKnownDeviceStore(KNOWN_DEVICES_PATH);
 const urlConfig: ReceiverUrlConfig = {
   publicHost: PUBLIC_HOST,
   receiverPort: PORT,
@@ -100,7 +113,9 @@ app.get("/api/info", (_req: Request, res: Response) => {
     dashboardUrl: urls.dashboardUrl,
     receiverWsUrl: urls.receiverWsUrl,
     phoneAppUrl: urls.phoneAppUrl,
-    autoAccept: AUTO_ACCEPT,
+    autoAcceptKnown: AUTO_ACCEPT_KNOWN,
+    autoAcceptAll: AUTO_ACCEPT_ALL,
+    staleCameraTtlMs: STALE_CAMERA_TTL_MS,
     bridgeUrl: BRIDGE_URL,
     tls: USE_TLS,
     ts: new Date().toISOString(),
@@ -109,6 +124,14 @@ app.get("/api/info", (_req: Request, res: Response) => {
 
 app.get("/api/cameras", (_req: Request, res: Response) => {
   res.json({ cameras: listCameras(state) });
+});
+
+app.get("/api/events", (_req: Request, res: Response) => {
+  res.json({ events: eventLog.list() });
+});
+
+app.get("/api/known-devices", (_req: Request, res: Response) => {
+  res.json({ devices: knownDevices.list() });
 });
 
 if ((process.env.RECEIVER_TEST_SHUTDOWN ?? "false").toLowerCase() === "true") {
@@ -129,6 +152,13 @@ app.post("/api/cameras/:id/accept", async (req: Request, res: Response) => {
     const allocation = await bridgeClient.allocateCamera(cam);
     if (allocation) {
       cam.bridge = allocation;
+      publishEvent({
+        type: "bridge-allocated",
+        sessionId: cam.sessionId,
+        deviceId: cam.deviceId,
+        name: cam.name,
+        message: `Bridge path allocated: ${allocation.path}`,
+      });
     }
   }
   const delivered = signaling.sendToCamera(id, {
@@ -137,6 +167,13 @@ app.post("/api/cameras/:id/accept", async (req: Request, res: Response) => {
     bridge: cam.bridge,
   });
   signaling.broadcastCameraUpdate(cam);
+  publishEvent({
+    type: "accepted",
+    sessionId: cam.sessionId,
+    deviceId: cam.deviceId,
+    name: cam.name,
+    message: "Camera accepted by operator",
+  });
   res.json({ ok: true, camera: cam, delivered });
 });
 
@@ -148,6 +185,87 @@ app.delete("/api/cameras/:id", async (req: Request, res: Response) => {
     await bridgeClient.removeCamera(id);
   }
   signaling.broadcastCameraList();
+  if (removed) {
+    publishEvent({
+      type: "stale-cleaned",
+      sessionId: id,
+      message: "Camera session removed by operator",
+      reason: "manual-remove",
+    });
+  }
+  res.json({ ok: removed });
+});
+
+app.post("/api/cameras/clear-stale", async (_req: Request, res: Response) => {
+  const cleaned = await clearStaleCameras(true);
+  res.json({ ok: true, cleaned });
+});
+
+app.post("/api/known-devices/:deviceId/trust", (req: Request, res: Response) => {
+  const deviceId = req.params.deviceId;
+  const autoAccept =
+    typeof req.body?.autoAccept === "boolean" ? req.body.autoAccept : true;
+  const known = knownDevices.updateTrust(deviceId, {
+    trusted: true,
+    autoAccept,
+  });
+  if (!known) {
+    res.status(404).json({ ok: false, error: "not-found" });
+    return;
+  }
+  for (const cam of state.cameras.values()) {
+    if (cam.deviceId === deviceId) {
+      cam.trusted = true;
+      signaling.broadcastCameraUpdate(cam);
+    }
+  }
+  publishEvent({
+    type: "device-trusted",
+    deviceId,
+    name: known.name,
+    message: autoAccept ? "Device trusted for auto-accept" : "Device trusted",
+  });
+  signaling.broadcastCameraList();
+  res.json({ ok: true, device: known });
+});
+
+app.post("/api/known-devices/:deviceId/auto-accept", (req: Request, res: Response) => {
+  const deviceId = req.params.deviceId;
+  const autoAccept = Boolean(req.body?.autoAccept);
+  const known = knownDevices.updateTrust(deviceId, {
+    trusted: true,
+    autoAccept,
+  });
+  if (!known) {
+    res.status(404).json({ ok: false, error: "not-found" });
+    return;
+  }
+  publishEvent({
+    type: "device-trusted",
+    deviceId,
+    name: known.name,
+    message: autoAccept ? "Device auto-accept enabled" : "Device auto-accept disabled",
+  });
+  res.json({ ok: true, device: known });
+});
+
+app.delete("/api/known-devices/:deviceId", (req: Request, res: Response) => {
+  const deviceId = req.params.deviceId;
+  const removed = knownDevices.forget(deviceId);
+  if (removed) {
+    for (const cam of state.cameras.values()) {
+      if (cam.deviceId === deviceId) {
+        cam.trusted = false;
+        signaling.broadcastCameraUpdate(cam);
+      }
+    }
+    publishEvent({
+      type: "device-forgotten",
+      deviceId,
+      message: "Known device forgotten",
+    });
+    signaling.broadcastCameraList();
+  }
   res.json({ ok: removed });
 });
 
@@ -195,12 +313,53 @@ function createServer() {
 const httpServer = createServer();
 const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
-const signaling = attachSignaling(wss, {
+let signaling: ReturnType<typeof attachSignaling>;
+
+function publishEvent(event: Parameters<typeof eventLog.add>[0]) {
+  const saved = eventLog.add(event);
+  signaling?.broadcastEvent(saved);
+  return saved;
+}
+
+async function clearStaleCameras(manual = false) {
+  const now = Date.now();
+  const stale = listCameras(state).filter((cam) => {
+    if (cam.status !== "pending" && cam.status !== "disconnected") return false;
+    const lastSeen = Date.parse(cam.lastSeen);
+    return Number.isFinite(lastSeen) && now - lastSeen >= STALE_CAMERA_TTL_MS;
+  });
+  for (const cam of stale) {
+    signaling.closeCameraSocket(cam.sessionId, 1000, "stale-cleanup");
+    removeCamera(state, cam.sessionId);
+    if (bridgeClient) await bridgeClient.removeCamera(cam.sessionId);
+    publishEvent({
+      type: "stale-cleaned",
+      sessionId: cam.sessionId,
+      deviceId: cam.deviceId,
+      name: cam.name,
+      message: "Stale camera session cleaned",
+      reason: manual ? "manual-clear-stale" : "ttl-expired",
+    });
+  }
+  if (stale.length > 0) signaling.broadcastCameraList();
+  return stale.map((cam) => cam.sessionId);
+}
+
+signaling = attachSignaling(wss, {
   state,
   log,
-  autoAccept: AUTO_ACCEPT,
+  autoAcceptAll: AUTO_ACCEPT_ALL,
+  autoAcceptKnown: AUTO_ACCEPT_KNOWN,
   bridgeClient,
+  knownDevices,
+  eventLog,
+  emitEvent: publishEvent,
 });
+
+const staleCleanup = setInterval(() => {
+  void clearStaleCameras(false).catch((err) => log("stale cleanup failed", err));
+}, Math.min(Math.max(STALE_CAMERA_TTL_MS / 2, 15_000), 60_000));
+staleCleanup.unref();
 
 httpServer.listen(PORT, HOST, () => {
   const urls = receiverUrls();
@@ -210,7 +369,12 @@ httpServer.listen(PORT, HOST, () => {
   log(`Phone app URL: ${urls.phoneAppUrl}`);
   log(`Phone pairing URL: ${urls.phonePairingUrl}`);
   log(`Scan this URL with the iPhone Camera app to open the phone app.`);
-  if (AUTO_ACCEPT) log("AUTO_ACCEPT=true: cameras will be auto-accepted on hello.");
+  log(`Known device store: ${KNOWN_DEVICES_PATH}`);
+  log(`AUTO_ACCEPT_KNOWN=${AUTO_ACCEPT_KNOWN}: trusted devices can reconnect without manual accept.`);
+  if (AUTO_ACCEPT_ALL) {
+    log("WARNING: AUTO_ACCEPT_ALL=true: any valid pairing-code camera will be auto-accepted.");
+  }
+  log(`STALE_CAMERA_TTL_MS=${STALE_CAMERA_TTL_MS}`);
   log(`Dashboard:    ${urls.dashboardUrl}`);
   if (BRIDGE_URL) {
     log(`Bridge API:   ${BRIDGE_URL} (RTSP paths appear after accept)`);
@@ -230,6 +394,7 @@ httpServer.listen(PORT, HOST, () => {
 
 function shutdown(signal: string): void {
   log(`received ${signal}, shutting down`);
+  clearInterval(staleCleanup);
   try {
     for (const ws of wss.clients) ws.terminate();
   } catch {

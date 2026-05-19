@@ -101,3 +101,14 @@ export function saveSettings(s: CameraSettings): void {
   };
   setJSON("settings", safe);
 }
+
+export function getOrCreateDeviceId(): string {
+  const existing = getString("deviceId");
+  if (/^[a-zA-Z0-9_-]{8,80}$/.test(existing)) return existing;
+  const generated =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? `browser-${crypto.randomUUID()}`
+      : `browser-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+  setString("deviceId", generated);
+  return generated;
+}
