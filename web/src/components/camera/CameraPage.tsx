@@ -350,35 +350,38 @@ export function CameraPage({
         )}
 
       {showSignalingHelp && (
-        <section className="camera-callout" role="alert" aria-live="polite">
+        <section
+          className="camera-callout camera-callout--compact"
+          role="alert"
+          aria-live="polite"
+        >
           <div className="camera-callout__title">
-            <AlertTriangle size={18} />
+            <AlertTriangle size={16} />
             Receiver signaling failed
           </div>
-          <p>
-            Attempted receiver WebSocket: <code>{settings.receiverUrl}</code>
-          </p>
+          <div className="camera-callout__body">
+            <p>
+              Tried <code>{settings.receiverUrl}</code>.
+              {trustReceiverUrl
+                ? " Trust the receiver certificate, then return and start again."
+                : ""}
+            </p>
+            {trustReceiverUrl && (
+              <p>
+                Opens <code>{trustReceiverUrl}</code>.
+              </p>
+            )}
+          </div>
           {trustReceiverUrl && (
-            <>
-              <p>
-                iOS often rejects <code>wss://</code> with a local self-signed
-                certificate until the matching HTTPS origin has been opened and
-                trusted on the phone.
-              </p>
-              <button
-                type="button"
-                className="camera-callout__button camera-callout__button--warning"
-                onClick={() => {
-                  window.location.href = trustReceiverUrl;
-                }}
-              >
-                Trust receiver certificate
-              </button>
-              <p>
-                Opens <code>{trustReceiverUrl}</code>. Accept the certificate
-                warning, then return here and tap start again.
-              </p>
-            </>
+            <button
+              type="button"
+              className="camera-callout__button camera-callout__button--secondary"
+              onClick={() => {
+                window.location.href = trustReceiverUrl;
+              }}
+            >
+              Trust receiver certificate
+            </button>
           )}
         </section>
       )}

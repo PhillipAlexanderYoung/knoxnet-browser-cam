@@ -44,6 +44,7 @@ function renderInfo(info) {
   const qrUrl = el("pairing-qr-url");
   if (qrUrl) {
     qrUrl.textContent = phonePairingUrl;
+    qrUrl.href = phonePairingUrl;
   }
   el("pairing-qr").src = `/api/pair-qr?ts=${Date.now()}`;
   const bridge = el("bridge-status");
