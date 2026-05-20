@@ -5,6 +5,12 @@ Pages is not a video relay. `https://cam.knoxnetvms.com` only serves the static
 phone app shell. The phone must still reach the receiver/bridge directly over a
 private network. The recommended remote mode is WireGuard.
 
+The receiver dashboard includes a guided **Remote Camera Setup (WireGuard)**
+wizard. Use that first when possible: it checks for the local `wg` tool,
+generates server/iPhone configs, shows a WireGuard import QR, and then creates a
+separate Knoxnet VPN pairing QR. This document remains the fallback/manual
+reference for environments where the dashboard wizard is not available.
+
 ```text
 iPhone
   -> https://cam.knoxnetvms.com static app

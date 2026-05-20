@@ -313,9 +313,13 @@ What it does not do:
 - It does not make a receiver behind NAT reachable by itself.
 - It does not make RTSP safe to expose to the public internet.
 
-For phones away from the LAN, use WireGuard first: the phone joins a private VPN
-and reaches the receiver at a VPN IP, for example `wss://10.44.0.1:8787/ws`.
-See [`docs/wireguard-remote-camera.md`](docs/wireguard-remote-camera.md).
+For phones away from the LAN, use the receiver dashboard's **Remote Camera Setup
+(WireGuard)** wizard first: it generates configs, copy-paste receiver commands,
+the WireGuard peer QR, and a separate Knoxnet VPN pairing QR. The phone then
+joins the private VPN and reaches the receiver at a VPN IP, for example
+`wss://10.44.0.1:8787/ws`. See
+[`docs/wireguard-remote-camera.md`](docs/wireguard-remote-camera.md) for manual
+fallback instructions.
 
 ## HTTPS caveat (important for phones)
 

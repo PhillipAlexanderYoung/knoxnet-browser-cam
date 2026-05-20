@@ -21,10 +21,18 @@ import { createEventLog } from "./events.js";
 import { createKnownDeviceStore } from "./known-devices.js";
 import {
   DEFAULT_PHONE_APP_URL,
+  buildPhonePairingUrl,
   buildReceiverUrls,
   httpScheme,
   type ReceiverUrlConfig,
 } from "./urls.js";
+import {
+  DEFAULT_WIREGUARD_SETTINGS,
+  WIREGUARD_INSTALL_COMMANDS,
+  generateWireGuardSetup,
+  getWireGuardStatus,
+  normalizeWireGuardSettings,
+} from "./wireguard.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -298,6 +306,97 @@ app.get("/api/pair-qr", async (_req: Request, res: Response) => {
   } catch (err) {
     log("qr error", err);
     res.status(500).json({ ok: false, error: "qr-failed" });
+  }
+});
+
+app.get("/api/wireguard/status", async (_req: Request, res: Response) => {
+  const wg = await getWireGuardStatus();
+  res.json({
+    ok: true,
+    ...wg,
+    defaults: {
+      ...DEFAULT_WIREGUARD_SETTINGS,
+      receiverPort: PORT,
+    },
+    installCommands: WIREGUARD_INSTALL_COMMANDS,
+    warnings: [
+      "WireGuard peer configs include private keys. Keep them secret.",
+      "A VPN exposes receiver services to VPN peers. Only add phones you trust.",
+      "Do not expose receiver, bridge, or RTSP ports directly to the public internet.",
+    ],
+  });
+});
+
+app.post("/api/wireguard/generate", async (req: Request, res: Response) => {
+  const wg = await getWireGuardStatus();
+  const settings = normalizeWireGuardSettings({
+    ...req.body,
+    receiverPort: req.body?.receiverPort ?? PORT,
+  });
+  const vpnUrlConfig: ReceiverUrlConfig = {
+    ...urlConfig,
+    publicHost: settings.receiverVpnIp,
+    receiverPort: settings.receiverPort,
+    useTls: true,
+    phoneAppUrl: DEFAULT_PHONE_APP_URL,
+    phoneAppEnv: undefined,
+    phoneAppScheme: undefined,
+    phoneAppPort: undefined,
+  };
+  const vpnReceiverWsUrl = `wss://${settings.receiverVpnIp}:${settings.receiverPort}/ws`;
+  const vpnDashboardUrl = `https://${settings.receiverVpnIp}:${settings.receiverPort}/`;
+  const vpnPairingUrl = buildPhonePairingUrl(vpnUrlConfig, state.code);
+
+  if (!wg.wgInstalled) {
+    res.status(409).json({
+      ok: false,
+      error: "wg-missing",
+      wgMissing: true,
+      settings,
+      installCommands: WIREGUARD_INSTALL_COMMANDS,
+      vpnReceiverWsUrl,
+      vpnDashboardUrl,
+      vpnPairingUrl,
+      message:
+        "WireGuard key generation requires the local wg command. Install WireGuard on the receiver, then refresh this wizard.",
+    });
+    return;
+  }
+
+  try {
+    const setup = await generateWireGuardSetup(settings);
+    const { server: _server, phone: _phone, ...configOnlySetup } = setup;
+    const [wireGuardPeerQr, vpnPairingQr] = await Promise.all([
+      qrcode.toDataURL(setup.phoneConfig, {
+        margin: 1,
+        width: 320,
+        color: { dark: "#000000ff", light: "#ffffffff" },
+      }),
+      qrcode.toDataURL(vpnPairingUrl, {
+        margin: 1,
+        width: 320,
+        color: { dark: "#000000ff", light: "#ffffffff" },
+      }),
+    ]);
+    res.json({
+      ok: true,
+      wgInstalled: true,
+      wgVersion: wg.version,
+      setup: configOnlySetup,
+      wireGuardPeerQr,
+      vpnPairingQr,
+      vpnPairingUrl,
+      vpnReceiverWsUrl,
+      vpnDashboardUrl,
+      notPersisted: true,
+    });
+  } catch (err) {
+    log("wireguard generate error", err);
+    res.status(500).json({
+      ok: false,
+      error: "wireguard-generate-failed",
+      message: "Failed to generate WireGuard keys/configs with wg.",
+    });
   }
 });
 

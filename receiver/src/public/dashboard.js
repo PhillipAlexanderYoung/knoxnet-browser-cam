@@ -19,6 +19,11 @@ const state = {
   cameras: new Map(),
   knownDevices: new Map(),
   events: [],
+  wireguard: {
+    status: null,
+    generated: null,
+    phase: "Not configured",
+  },
 };
 
 function setStatus(label, mode) {
@@ -112,6 +117,146 @@ function recommendedWireGuardReceiverUrl(info) {
   return DEFAULT_WIREGUARD_RECEIVER_URL;
 }
 
+async function fetchWireGuardStatus() {
+  const res = await fetch("/api/wireguard/status", { cache: "no-store" });
+  if (!res.ok) throw new Error(`wireguard status ${res.status}`);
+  return res.json();
+}
+
+async function loadWireGuardStatus() {
+  const statusNode = el("wg-tool-status");
+  try {
+    const status = await fetchWireGuardStatus();
+    state.wireguard.status = status;
+    applyWireGuardDefaults(status.defaults);
+    updateWireGuardControls();
+  } catch (err) {
+    console.warn("wireguard status", err);
+    if (statusNode) {
+      statusNode.textContent = "Could not check WireGuard tools. The wizard API may be unavailable.";
+      statusNode.className = "wg-status wg-status--error";
+    }
+  }
+}
+
+function applyWireGuardDefaults(defaults) {
+  if (!defaults) return;
+  const values = {
+    "wg-subnet": defaults.vpnSubnet,
+    "wg-receiver-ip": defaults.receiverVpnIp,
+    "wg-phone-ip": defaults.phoneVpnIp,
+    "wg-port": defaults.listenPort,
+  };
+  for (const [id, value] of Object.entries(values)) {
+    const node = el(id);
+    if (node && value) node.value = value;
+  }
+}
+
+function readWireGuardSettings() {
+  return {
+    vpnSubnet: el("wg-subnet")?.value?.trim() || "10.44.0.0/24",
+    receiverVpnIp: el("wg-receiver-ip")?.value?.trim() || "10.44.0.1",
+    phoneVpnIp: el("wg-phone-ip")?.value?.trim() || "10.44.0.10",
+    listenPort: Number(el("wg-port")?.value || 51820),
+    publicEndpoint: el("wg-endpoint")?.value?.trim() || "",
+    receiverPort: state.info?.httpPort || 8787,
+  };
+}
+
+function setWireGuardPhase(phase) {
+  state.wireguard.phase = phase;
+  const node = el("wg-state");
+  if (node) node.textContent = phase;
+}
+
+function updateWireGuardControls() {
+  const status = state.wireguard.status;
+  const ack = Boolean(el("wg-ack")?.checked);
+  const generate = el("wg-generate");
+  const statusNode = el("wg-tool-status");
+  if (generate) generate.disabled = !ack || !status?.wgInstalled;
+  if (!statusNode) return;
+  if (!status) {
+    statusNode.textContent = "Checking for WireGuard tools…";
+    statusNode.className = "wg-status";
+  } else if (status.wgInstalled) {
+    statusNode.textContent = `WireGuard tools found${status.version ? `: ${status.version}` : ""}. Config generation is available after acknowledgement.`;
+    statusNode.className = "wg-status";
+  } else {
+    statusNode.textContent = `WireGuard tools not found. Install them on the receiver, then refresh: ${status.installCommands}`;
+    statusNode.className = "wg-status wg-status--warn";
+  }
+}
+
+async function generateWireGuardSetup() {
+  const button = el("wg-generate");
+  const statusNode = el("wg-tool-status");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Generating…";
+  }
+  try {
+    const res = await fetch("/api/wireguard/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(readWireGuardSettings()),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (data.wgMissing && statusNode) {
+        statusNode.textContent = `${data.message} ${data.installCommands}`;
+        statusNode.className = "wg-status wg-status--warn";
+      } else {
+        throw new Error(data.message || data.error || `wireguard generate ${res.status}`);
+      }
+      return;
+    }
+    renderWireGuardSetup(data);
+  } catch (err) {
+    console.error(err);
+    if (statusNode) {
+      statusNode.textContent = err instanceof Error ? err.message : "WireGuard generation failed.";
+      statusNode.className = "wg-status wg-status--error";
+    }
+  } finally {
+    if (button) {
+      button.textContent = "Generate configs";
+      updateWireGuardControls();
+    }
+  }
+}
+
+function renderWireGuardSetup(data) {
+  state.wireguard.generated = data;
+  setWireGuardPhase("Config generated");
+  const generated = el("wg-generated");
+  if (generated) generated.classList.remove("hidden");
+  el("wg-commands").textContent = data.setup.commands;
+  el("wg-phone-config").textContent = data.setup.phoneConfig;
+  el("wg-peer-qr").src = data.wireGuardPeerQr;
+  el("wg-dashboard-url").textContent = data.vpnDashboardUrl;
+  el("wg-vpn-ws").textContent = data.vpnReceiverWsUrl;
+  const remoteWireGuardUrl = el("remote-wireguard-url");
+  if (remoteWireGuardUrl) remoteWireGuardUrl.textContent = data.vpnReceiverWsUrl;
+  const pairingQr = el("wg-pairing-qr");
+  if (pairingQr) pairingQr.src = data.vpnPairingQr;
+  const pairingUrl = el("wg-pairing-url");
+  if (pairingUrl) {
+    pairingUrl.href = data.vpnPairingUrl;
+    pairingUrl.textContent = data.vpnPairingUrl;
+  }
+}
+
+async function copyElementText(targetId, button) {
+  const target = el(targetId);
+  if (!target) return;
+  await navigator.clipboard.writeText(target.textContent || "");
+  const old = button.textContent;
+  button.textContent = "Copied!";
+  setTimeout(() => (button.textContent = old), 1200);
+}
+
 el("copy-url").addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(
@@ -122,6 +267,17 @@ el("copy-url").addEventListener("click", async () => {
   } catch (e) {
     console.warn("clipboard fail", e);
   }
+});
+
+el("wg-ack")?.addEventListener("change", updateWireGuardControls);
+el("wg-generate")?.addEventListener("click", generateWireGuardSetup);
+el("wg-show-pairing")?.addEventListener("click", () => {
+  el("wg-vpn-pairing")?.classList.remove("hidden");
+  setWireGuardPhase("Waiting for VPN");
+});
+el("wg-mark-ready")?.addEventListener("click", () => {
+  el("wg-vpn-pairing")?.classList.remove("hidden");
+  setWireGuardPhase("Ready");
 });
 
 function statusForCamera(cam) {
@@ -366,6 +522,11 @@ function safeHost(rawUrl) {
 document.addEventListener("click", async (e) => {
   const t = e.target;
   if (!(t instanceof HTMLElement)) return;
+  const copyTarget = t.getAttribute("data-copy-target");
+  if (copyTarget) {
+    await copyElementText(copyTarget, t);
+    return;
+  }
   const action = t.getAttribute("data-action");
   const id = t.getAttribute("data-id");
   if (!action || !id) return;
@@ -648,6 +809,7 @@ async function openViewer(sessionId) {
     setStatus("Loading…", "");
     const info = await fetchInfo();
     renderInfo(info);
+    void loadWireGuardStatus();
     const [known, events] = await Promise.all([fetchKnownDevices(), fetchEvents()]);
     state.knownDevices = new Map((known.devices ?? []).map((d) => [d.deviceId, d]));
     state.events = events.events ?? [];
