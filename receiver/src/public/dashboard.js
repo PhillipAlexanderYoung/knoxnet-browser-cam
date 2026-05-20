@@ -123,6 +123,19 @@ function bridgePreviewUrl(cam) {
   return cam.bridge?.preview?.webRtcUrl || cam.bridge?.previewUrls?.webRtc || "";
 }
 
+function stableKbps(kbps) {
+  if (typeof kbps !== "number" || kbps <= 0) return 0;
+  const bucket = kbps >= 1000 ? 100 : 50;
+  return Math.max(bucket, Math.round(kbps / bucket) * bucket);
+}
+
+function formatKbps(kbps) {
+  const rounded = stableKbps(kbps);
+  if (!rounded) return "— kbps";
+  if (rounded >= 1000) return `${(rounded / 1000).toFixed(1)} Mbps`;
+  return `${rounded} kbps`;
+}
+
 function qualityLabel(quality) {
   if (!quality) return "";
   const current = quality.currentResolution || (quality.height ? `${quality.height}p` : "");
@@ -131,8 +144,16 @@ function qualityLabel(quality) {
     : (quality.currentResolution || quality.requestedResolution || quality.mode);
   const details = [];
   if (quality.frameRate) details.push(`${Math.round(quality.frameRate)}fps`);
-  if (quality.bitrateKbps) details.push(`${Math.round(quality.bitrateKbps)} kbps`);
+  if (quality.bitrateKbps) details.push(formatKbps(quality.bitrateKbps));
   return [mode, ...details].filter(Boolean).join(" / ");
+}
+
+function renderViewerMeta(viewer) {
+  el("viewer-meta").innerHTML = `
+    <div class="viewer__meta-row"><span>session</span><span>${escapeHtml(viewer.sessionId)}</span></div>
+    <div class="viewer__meta-row"><span>pc state</span><span id="pc-state">${escapeHtml(viewer.pc.connectionState)}</span></div>
+    <div class="viewer__meta-row"><span>bitrate</span><span id="viewer-bitrate" class="viewer__bitrate">— kbps</span></div>
+  `;
 }
 
 function renderCameras() {
@@ -476,11 +497,20 @@ async function openViewer(sessionId) {
   const url = `${proto}//${location.host}/ws`;
   const ws = new WebSocket(url);
   const pc = new RTCPeerConnection({ iceServers: STUN_SERVERS });
-  const viewer = { sessionId, ws, pc, statsInterval: null };
+  const viewer = {
+    sessionId,
+    ws,
+    pc,
+    statsInterval: null,
+    lastBytes: 0,
+    lastT: 0,
+    displayedKbps: 0,
+    lastMetaAt: 0,
+  };
   state.viewer = viewer;
 
   el("viewer-section").classList.remove("hidden");
-  el("viewer-meta").innerHTML = `<div class="viewer__meta-row"><span>session</span><span>${escapeHtml(sessionId)}</span></div><div class="viewer__meta-row"><span>state</span><span id="pc-state">…</span></div>`;
+  renderViewerMeta(viewer);
 
   pc.ontrack = (ev) => {
     const vid = el("viewer-video");
@@ -567,8 +597,6 @@ async function openViewer(sessionId) {
     try {
       const stats = await pc.getStats();
       let kbps = 0;
-      let bytesPrev = viewer.lastBytes || 0;
-      let lastT = viewer.lastT || 0;
       let total = 0;
       stats.forEach((s) => {
         if (s.type === "inbound-rtp" && (s.kind === "video" || s.mediaType === "video")) {
@@ -576,19 +604,22 @@ async function openViewer(sessionId) {
         }
       });
       const now = performance.now();
-      if (lastT > 0) {
-        const dt = (now - lastT) / 1000;
-        if (dt > 0) kbps = Math.round(((total - bytesPrev) * 8) / 1000 / dt);
+      if (viewer.lastT > 0) {
+        const dt = (now - viewer.lastT) / 1000;
+        if (dt > 0) kbps = Math.round(((total - viewer.lastBytes) * 8) / 1000 / dt);
       }
       viewer.lastBytes = total;
       viewer.lastT = now;
-      const meta = document.getElementById("viewer-meta");
-      if (meta) {
-        meta.innerHTML = `
-          <div class="viewer__meta-row"><span>session</span><span>${escapeHtml(sessionId)}</span></div>
-          <div class="viewer__meta-row"><span>pc state</span><span>${pc.connectionState}</span></div>
-          <div class="viewer__meta-row"><span>bitrate</span><span>${kbps} kbps</span></div>
-        `;
+      const rounded = stableKbps(kbps);
+      viewer.displayedKbps = viewer.displayedKbps
+        ? Math.round(viewer.displayedKbps * 0.65 + rounded * 0.35)
+        : rounded;
+      if (now - viewer.lastMetaAt >= 2500) {
+        viewer.lastMetaAt = now;
+        const bitrateNode = document.getElementById("viewer-bitrate");
+        if (bitrateNode) bitrateNode.textContent = formatKbps(viewer.displayedKbps);
+        const stateNode = document.getElementById("pc-state");
+        if (stateNode) stateNode.textContent = pc.connectionState;
       }
     } catch {}
   }, 1000);

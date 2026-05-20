@@ -341,14 +341,28 @@ export function CameraPage({
   const liveResolutionLabel = useMemo(() => {
     const w = api.trackSettings?.width;
     const h = api.trackSettings?.height;
+    const current =
+      typeof h === "number"
+        ? h >= 1080
+          ? "1080p"
+          : h >= 720
+            ? "720p"
+            : h >= 480
+              ? "480p"
+              : `${h}p`
+        : api.quality.currentResolution;
+    if (settingsResolution === "auto") {
+      const currentResolution =
+        current === "480p" || current === "720p" || current === "1080p"
+          ? current
+          : api.quality.currentResolution;
+      return resolutionModeLabel("auto", currentResolution);
+    }
     if (typeof w === "number" && typeof h === "number") {
       if (h >= 1080) return "1080p";
       if (h >= 720) return "720p";
       if (h >= 480) return "480p";
       return `${h}p`;
-    }
-    if (settingsResolution === "auto") {
-      return resolutionModeLabel("auto", api.quality.currentResolution);
     }
     return settingsResolution;
   }, [api.trackSettings, api.quality.currentResolution, settingsResolution]);

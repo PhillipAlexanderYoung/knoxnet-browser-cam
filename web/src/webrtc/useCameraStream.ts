@@ -27,6 +27,9 @@ const AUTO_UPGRADE_COOLDOWN_MS = 120_000;
 const AUTO_STABLE_MS = 180_000;
 const AUTO_UNSTABLE_SAMPLES = 3;
 const AUTO_LOW_BITRATE_KBPS = 350;
+const AUTO_STARTUP_HOLDOFF_MS = 8_000;
+const QUALITY_UPDATE_MIN_MS = 3_000;
+const QUALITY_BITRATE_BUCKET_KBPS = 100;
 
 export interface ReconnectInfo {
   active: boolean;
@@ -147,6 +150,26 @@ function effectiveAutoBitrateCap(resolution: ResolutionKey, requestedKbps: numbe
   return Math.min(requestedKbps, cap);
 }
 
+function roundBitrateKbps(kbps?: number): number | undefined {
+  if (typeof kbps !== "number" || kbps <= 0) return undefined;
+  const bucket = kbps >= 1000 ? QUALITY_BITRATE_BUCKET_KBPS : 50;
+  return Math.max(bucket, Math.round(kbps / bucket) * bucket);
+}
+
+function isAbortError(err: unknown): boolean {
+  return (err as { name?: unknown })?.name === "AbortError";
+}
+
+function makeAbortError(message: string): Error {
+  try {
+    return new DOMException(message, "AbortError");
+  } catch {
+    const err = new Error(message);
+    err.name = "AbortError";
+    return err;
+  }
+}
+
 export interface StartParams {
   receiverUrl: string;
   pairingCode: string;
@@ -189,6 +212,7 @@ export interface CameraStreamApi {
     resolution: ResolutionMode;
     frameRate: FrameRate;
     audioEnabled: boolean;
+    signal?: AbortSignal;
   }): Promise<MediaStream>;
   releasePreview(): void;
 }
@@ -239,12 +263,17 @@ export function useCameraStream(): CameraStreamApi {
   const shouldStreamRef = useRef(false);
   const reconnectAttemptRef = useRef(0);
   const reconnectingRef = useRef(false);
+  const connectionAttemptIdRef = useRef(0);
+  const activeStartPromiseRef = useRef<Promise<void> | null>(null);
+  const activeAbortControllerRef = useRef<AbortController | null>(null);
   const effectiveResolutionRef = useRef<ResolutionKey>(chooseInitialAutoResolution());
   const userBitrateKbpsRef = useRef(2000);
   const autoUnstableSamplesRef = useRef(0);
   const autoStableSinceRef = useRef<number | null>(null);
   const autoLastAdjustAtRef = useRef(0);
+  const autoStartedAtRef = useRef(0);
   const lastQualitySentRef = useRef("");
+  const lastQualityUpdateAtRef = useRef(0);
   const qualityMessageRef = useRef<string | null>(null);
   const qualityMessageUntilRef = useRef(0);
   const startOnceRef = useRef<
@@ -254,6 +283,11 @@ export function useCameraStream(): CameraStreamApi {
   const handleRecoverableFailureRef = useRef<(reason: string, message?: string) => void>(
     () => {},
   );
+
+  const logConnection = useCallback((message: string, meta?: Record<string, unknown>) => {
+    // eslint-disable-next-line no-console
+    console.debug("[camera-stream]", message, meta ?? "");
+  }, []);
 
   useEffect(() => {
     if (!cameraAccessError) return;
@@ -266,8 +300,9 @@ export function useCameraStream(): CameraStreamApi {
     if (reconnectTimerRef.current != null) {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
+      logConnection("reconnect cancelled");
     }
-  }, []);
+  }, [logConnection]);
 
   const clearConnectionTimers = useCallback(() => {
     if (negotiationTimeoutRef.current != null) {
@@ -347,15 +382,38 @@ export function useCameraStream(): CameraStreamApi {
         qualityMessageRef.current = null;
       }
       const requestedResolution = startParamsRef.current?.resolution ?? currentResolution;
-      setQuality({
+      const bitrateKbps = roundBitrateKbps(nextStats?.bitrateKbps);
+      const nextQuality: StreamQualityInfo = {
         mode: requestedResolution === "auto" ? "auto" : currentResolution,
         requestedResolution,
         currentResolution,
         width,
         height,
         frameRate,
-        bitrateKbps: nextStats?.bitrateKbps,
+        bitrateKbps,
         message: qualityMessageRef.current,
+      };
+      const now = Date.now();
+      setQuality((prev) => {
+        const structuralChanged =
+          prev.mode !== nextQuality.mode ||
+          prev.requestedResolution !== nextQuality.requestedResolution ||
+          prev.currentResolution !== nextQuality.currentResolution ||
+          prev.width !== nextQuality.width ||
+          prev.height !== nextQuality.height ||
+          prev.frameRate !== nextQuality.frameRate ||
+          prev.message !== nextQuality.message;
+        const bitrateChanged = prev.bitrateKbps !== nextQuality.bitrateKbps;
+        if (!structuralChanged && !bitrateChanged) return prev;
+        if (
+          !structuralChanged &&
+          bitrateChanged &&
+          now - lastQualityUpdateAtRef.current < QUALITY_UPDATE_MIN_MS
+        ) {
+          return prev;
+        }
+        lastQualityUpdateAtRef.current = now;
+        return nextQuality;
       });
     },
     [],
@@ -381,6 +439,7 @@ export function useCameraStream(): CameraStreamApi {
 
   const releasePreview = useCallback((): void => {
     const s = streamRef.current;
+    currentVideoTrackRef.current = null;
     if (s) {
       for (const t of s.getTracks()) {
         try {
@@ -391,7 +450,6 @@ export function useCameraStream(): CameraStreamApi {
       }
     }
     streamRef.current = null;
-    currentVideoTrackRef.current = null;
     setStream(null);
     setTorchOn(false);
     refreshTrackInfo(null);
@@ -404,7 +462,11 @@ export function useCameraStream(): CameraStreamApi {
       resolution: ResolutionMode;
       frameRate: FrameRate;
       audioEnabled: boolean;
+      signal?: AbortSignal;
     }): Promise<MediaStream> => {
+      if (opts.signal?.aborted) {
+        throw makeAbortError("Camera start was cancelled.");
+      }
       const unsupportedReason =
         cameraAccessError ?? getCameraAccessErrorMessage();
       if (unsupportedReason) {
@@ -436,7 +498,12 @@ export function useCameraStream(): CameraStreamApi {
       let qualityMessage: string | null = null;
       try {
         media = await navigator.mediaDevices.getUserMedia({ video, audio });
+        if (opts.signal?.aborted) {
+          for (const t of media.getTracks()) t.stop();
+          throw makeAbortError("Camera start was cancelled.");
+        }
       } catch (err) {
+        if (isAbortError(err)) throw err;
         const fallback = isCameraPermissionDeniedError(err)
           ? null
           : nextLowerResolution(requestedResolution);
@@ -452,6 +519,10 @@ export function useCameraStream(): CameraStreamApi {
               video: fallbackVideo,
               audio,
             });
+            if (opts.signal?.aborted) {
+              for (const t of media.getTracks()) t.stop();
+              throw makeAbortError("Camera start was cancelled.");
+            }
             effectiveResolutionRef.current = fallback;
             qualityMessage =
               opts.resolution === "auto"
@@ -500,8 +571,13 @@ export function useCameraStream(): CameraStreamApi {
   );
 
   const stop = useCallback(async (opts: { preserveError?: boolean } = {}): Promise<void> => {
+    logConnection("manual stop", { attemptId: connectionAttemptIdRef.current });
     shouldStreamRef.current = false;
     setShouldStream(false);
+    connectionAttemptIdRef.current += 1;
+    activeAbortControllerRef.current?.abort();
+    activeAbortControllerRef.current = null;
+    activeStartPromiseRef.current = null;
     reconnectAttemptRef.current = 0;
     reconnectingRef.current = false;
     clearReconnectTimer();
@@ -518,7 +594,9 @@ export function useCameraStream(): CameraStreamApi {
     autoUnstableSamplesRef.current = 0;
     autoStableSinceRef.current = null;
     autoLastAdjustAtRef.current = 0;
+    autoStartedAtRef.current = 0;
     lastQualitySentRef.current = "";
+    lastQualityUpdateAtRef.current = 0;
     qualityMessageRef.current = null;
     qualityMessageUntilRef.current = 0;
     if (!opts.preserveError) {
@@ -527,7 +605,7 @@ export function useCameraStream(): CameraStreamApi {
     }
     setState("idle");
     releasePreview();
-  }, [cleanupConnection, clearReconnectTimer, releasePreview]);
+  }, [cleanupConnection, clearReconnectTimer, logConnection, releasePreview]);
 
   const applyTrackConstraints = useCallback(
     async (opts: {
@@ -673,6 +751,11 @@ export function useCameraStream(): CameraStreamApi {
       if (!params || params.resolution !== "auto") return;
 
       const now = Date.now();
+      if (autoStartedAtRef.current && now - autoStartedAtRef.current < AUTO_STARTUP_HOLDOFF_MS) {
+        autoUnstableSamplesRef.current = 0;
+        autoStableSinceRef.current = null;
+        return;
+      }
       const unstable =
         next.bitrateKbps > 0 &&
         (next.bitrateKbps < AUTO_LOW_BITRATE_KBPS ||
@@ -722,14 +805,22 @@ export function useCameraStream(): CameraStreamApi {
       message?: string,
       opts: { detail?: SignalingStateDetail; kind?: StreamErrorKind } = {},
     ): void => {
-      if (!shouldStreamRef.current) return;
+      if (!shouldStreamRef.current) {
+        logConnection("reconnect ignored", { reason, stopped: true });
+        return;
+      }
       const params = startParamsRef.current;
-      if (!params) return;
+      if (!params) {
+        logConnection("reconnect ignored", { reason, missingParams: true });
+        return;
+      }
       if (params.resolution === "auto" && reason !== "network-offline") {
         const lower = nextLowerResolution(effectiveResolutionRef.current);
         if (
           lower &&
-          Date.now() - autoLastAdjustAtRef.current >= AUTO_DOWNGRADE_COOLDOWN_MS
+          Date.now() - autoLastAdjustAtRef.current >= AUTO_DOWNGRADE_COOLDOWN_MS &&
+          (!autoStartedAtRef.current ||
+            Date.now() - autoStartedAtRef.current >= AUTO_STARTUP_HOLDOFF_MS)
         ) {
           autoLastAdjustAtRef.current = Date.now();
           void applyAutoResolution(lower, "stability");
@@ -758,6 +849,12 @@ export function useCameraStream(): CameraStreamApi {
         Math.max(offlineFloor, Math.round(baseDelay * jitter)),
       );
       const nextAt = Date.now() + delayMs;
+      logConnection("reconnect scheduled", {
+        reason,
+        attempt,
+        delayMs,
+        connectionAttemptId: connectionAttemptIdRef.current,
+      });
       setReconnect({ active: true, attempt, delayMs, reason, nextAt });
       reconnectTimerRef.current = window.setTimeout(() => {
         reconnectTimerRef.current = null;
@@ -768,7 +865,7 @@ export function useCameraStream(): CameraStreamApi {
         });
       }, delayMs);
     },
-    [applyAutoResolution, cleanupConnection],
+    [applyAutoResolution, cleanupConnection, logConnection],
   );
 
   useEffect(() => {
@@ -780,6 +877,29 @@ export function useCameraStream(): CameraStreamApi {
       params: StartParams,
       _opts: { isReconnect?: boolean } = {},
     ): Promise<void> => {
+      if (activeStartPromiseRef.current) {
+        logConnection("duplicate start ignored", {
+          connectionAttemptId: connectionAttemptIdRef.current,
+          reconnect: Boolean(_opts.isReconnect),
+        });
+        return activeStartPromiseRef.current;
+      }
+      const attemptId = connectionAttemptIdRef.current + 1;
+      connectionAttemptIdRef.current = attemptId;
+      activeAbortControllerRef.current?.abort();
+      const abortController = new AbortController();
+      activeAbortControllerRef.current = abortController;
+      const isCurrentAttempt = (): boolean =>
+        shouldStreamRef.current &&
+        !abortController.signal.aborted &&
+        connectionAttemptIdRef.current === attemptId;
+      const ignoreIfStale = (stage: string): boolean => {
+        const stale = !isCurrentAttempt();
+        if (stale) logConnection("stale callback ignored", { attemptId, stage });
+        return stale;
+      };
+      logConnection("start attempt", { attemptId, reconnect: Boolean(_opts.isReconnect) });
+      const run = (async (): Promise<void> => {
       setError(null);
       setErrorKind(null);
       clearConnectionTimers();
@@ -799,9 +919,11 @@ export function useCameraStream(): CameraStreamApi {
         effectiveResolutionRef.current = chooseInitialAutoResolution();
         autoUnstableSamplesRef.current = 0;
         autoStableSinceRef.current = null;
-        autoLastAdjustAtRef.current = 0;
+        autoStartedAtRef.current = Date.now();
+        autoLastAdjustAtRef.current = autoStartedAtRef.current;
       } else if (isManualResolution(params.resolution)) {
         effectiveResolutionRef.current = params.resolution;
+        autoStartedAtRef.current = 0;
       }
 
       let media = streamRef.current;
@@ -814,12 +936,19 @@ export function useCameraStream(): CameraStreamApi {
           resolution: params.resolution,
           frameRate: params.frameRate,
           audioEnabled: params.audioEnabled,
+          signal: abortController.signal,
         });
+        if (ignoreIfStale("preview-acquired")) {
+          releasePreview();
+          return;
+        }
       } else {
         // Make sure audio enabled state matches.
         const audioTrack = media.getAudioTracks()[0];
         if (audioTrack) audioTrack.enabled = params.audioEnabled;
       }
+
+      if (ignoreIfStale("before-signaling")) return;
 
       const caps: CameraCapabilities = {
         resolutions: ["auto", "480p", "720p", "1080p"],
@@ -838,7 +967,7 @@ export function useCameraStream(): CameraStreamApi {
       const client = new SignalingClient({
         url: params.receiverUrl,
         onStateChange: (s, detail) => {
-          if (!shouldStreamRef.current) return;
+          if (ignoreIfStale(`ws-${s}`)) return;
           if (s === "open") {
             setState("searching");
             client.send({
@@ -870,7 +999,7 @@ export function useCameraStream(): CameraStreamApi {
           }
         },
         onMessage: async (msg) => {
-          if (!shouldStreamRef.current) return;
+          if (ignoreIfStale(`message-${msg.type}`)) return;
           if (msg.type === "hello-ack") {
             if (!msg.paired) {
               setError(msg.reason ?? "Invalid pairing code or receiver rejected pairing.");
@@ -892,6 +1021,7 @@ export function useCameraStream(): CameraStreamApi {
               window.clearTimeout(negotiationTimeoutRef.current);
             }
             negotiationTimeoutRef.current = window.setTimeout(() => {
+              if (ignoreIfStale("negotiation-timeout")) return;
               scheduleReconnect(
                 "negotiation-timeout",
                 "WebRTC negotiation timed out. Check receiver bridge logs and MediaMTX health; RTSP is not live until WHIP publish succeeds.",
@@ -911,7 +1041,7 @@ export function useCameraStream(): CameraStreamApi {
                     )
                   : params.maxBitrateKbps,
               onConnectionStateChange: (pcState) => {
-                if (peerRef.current !== peer) return;
+                if (peerRef.current !== peer || ignoreIfStale(`pc-${pcState}`)) return;
                 if (pcState === "connected") {
                   if (negotiationTimeoutRef.current != null) {
                     window.clearTimeout(negotiationTimeoutRef.current);
@@ -943,7 +1073,7 @@ export function useCameraStream(): CameraStreamApi {
                 }
               },
               onIceConnectionStateChange: (iceState) => {
-                if (peerRef.current !== peer) return;
+                if (peerRef.current !== peer || ignoreIfStale(`ice-${iceState}`)) return;
                 if (iceState === "failed" || iceState === "disconnected") {
                   scheduleReconnect(
                     `ice-${iceState}`,
@@ -954,8 +1084,17 @@ export function useCameraStream(): CameraStreamApi {
             });
             peerRef.current = peer;
             try {
+              if (ignoreIfStale("before-offer")) {
+                peer.close();
+                return;
+              }
               await peer.createAndSendOffer();
+              if (ignoreIfStale("offer-sent")) {
+                peer.close();
+                return;
+              }
             } catch (err) {
+              if (ignoreIfStale("offer-failed")) return;
               scheduleReconnect(
                 "offer-failed",
                 (err as Error)?.message ?? "Failed to start WebRTC; reconnecting.",
@@ -963,8 +1102,9 @@ export function useCameraStream(): CameraStreamApi {
             }
             if (statsIntervalRef.current == null) {
               statsIntervalRef.current = window.setInterval(async () => {
-                if (!peerRef.current) return;
+                if (!peerRef.current || ignoreIfStale("stats")) return;
                 const next = await peerRef.current.pollStats();
+                if (ignoreIfStale("stats-result")) return;
                 setStats(next);
                 updateQualityFromTrack(null, next);
                 handleAutoStats(next);
@@ -980,8 +1120,11 @@ export function useCameraStream(): CameraStreamApi {
               window.clearTimeout(negotiationTimeoutRef.current);
               negotiationTimeoutRef.current = null;
             }
+            if (ignoreIfStale("before-answer")) return;
             await peerRef.current?.acceptAnswer(msg.sdp);
+            if (ignoreIfStale("answer-applied")) return;
           } else if (msg.type === "ice") {
+            if (ignoreIfStale("before-ice")) return;
             await peerRef.current?.addRemoteIce(msg.candidate);
           } else if (msg.type === "bye") {
             await stop();
@@ -996,6 +1139,18 @@ export function useCameraStream(): CameraStreamApi {
       });
       signalingRef.current = client;
       client.connect();
+      })();
+      activeStartPromiseRef.current = run;
+      try {
+        await run;
+      } finally {
+        if (activeStartPromiseRef.current === run) {
+          activeStartPromiseRef.current = null;
+        }
+        if (activeAbortControllerRef.current === abortController) {
+          activeAbortControllerRef.current = null;
+        }
+      }
     },
     [
       acquirePreview,
@@ -1003,6 +1158,7 @@ export function useCameraStream(): CameraStreamApi {
       cleanupConnection,
       clearConnectionTimers,
       handleAutoStats,
+      logConnection,
       releasePreview,
       scheduleReconnect,
       stop,
@@ -1032,6 +1188,10 @@ export function useCameraStream(): CameraStreamApi {
       try {
         await startOnce(params);
       } catch (err) {
+        if (isAbortError(err) || !shouldStreamRef.current) {
+          logConnection("start aborted", { connectionAttemptId: connectionAttemptIdRef.current });
+          return;
+        }
         if (!shouldStreamRef.current) throw err;
         if (isCameraPermissionDeniedError(err)) {
           shouldStreamRef.current = false;
@@ -1057,7 +1217,7 @@ export function useCameraStream(): CameraStreamApi {
         );
       }
     },
-    [clearReconnectTimer, scheduleReconnect, startOnce],
+    [clearReconnectTimer, logConnection, scheduleReconnect, startOnce],
   );
 
   useEffect(() => {

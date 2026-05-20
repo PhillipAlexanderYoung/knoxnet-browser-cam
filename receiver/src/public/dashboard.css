@@ -282,7 +282,12 @@ a.pairing__url:hover {
 .camera__dot--disconnected { background: var(--red); }
 
 .camera__name { font-weight: 600; font-size: 14px; }
-.camera__meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.camera__meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
 .camera__actions { display: flex; gap: 8px; }
 .known-devices,
 .events {
@@ -382,8 +387,15 @@ a.pairing__url:hover {
 .viewer__meta-row {
   display: flex;
   justify-content: space-between;
+  gap: 14px;
   padding: 8px 10px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+.viewer__bitrate {
+  display: inline-block;
+  min-width: 74px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
