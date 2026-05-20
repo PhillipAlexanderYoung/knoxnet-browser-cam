@@ -1,9 +1,10 @@
 # Knoxnet VMS integration
 
-> Status: **Bridge scaffold implemented.** This repo now has a standalone
-> `bridge/` service that manages MediaMTX, allocates RTSP paths, and lets the
-> receiver relay accepted phone-browser WebRTC offers into MediaMTX via WHIP.
-> Knoxnet VMS (`/home/operator1/Documents/Knoxnet-VMS`) is not modified.
+> Status: **Receiver/bridge VMS API implemented.** This repo now exposes an
+> authenticated receiver-side `/api/vms/v1/*` namespace that lets Knoxnet VMS
+> manage pairing, trusted devices, RTSP credentials, credentialed RTSP URLs, and
+> diagnostics without opening the standalone dashboard. Knoxnet VMS
+> (`/home/operator1/Documents/Knoxnet-VMS`) is not modified here.
 
 This document outlines the chosen bridge architecture and the remaining
 packaging steps. Search the codebase for `TODO(knoxnet-vms):` markers for the
@@ -37,6 +38,14 @@ What exists now:
   allocates a path and shows `rtsp://<host>:8554/<camera-slug>` in the dashboard.
 - When a bridged camera sends its WebRTC offer, the receiver relays that SDP to
   the bridge WHIP endpoint and sends MediaMTX's SDP answer back to the phone.
+- `receiver/` exposes `/api/vms/v1/*` for Knoxnet VMS. All endpoints require
+  `Authorization: Bearer <token>` or `X-Knoxnet-VMS-Token: <token>`.
+- The receiver generates a local VMS integration token on first start unless
+  `VMS_INTEGRATION_TOKEN` is set. The generated token is saved to
+  `VMS_INTEGRATION_TOKEN_FILE` or `receiver/data/vms-integration-token` with
+  restrictive permissions and is logged once.
+- The phone browser never receives RTSP credentials. Credential-bearing URLs are
+  only returned through the authenticated VMS API.
 
 Current limitations:
 
@@ -46,6 +55,70 @@ Current limitations:
   candidates in SDP. WHIP trickle-ICE `PATCH` support is still a TODO marker.
 - The browser dashboard live viewer is bypassed for bridged cameras. Use the
   displayed RTSP URL in Knoxnet VMS, VLC, ffplay, or another RTSP client.
+
+## Receiver VMS API
+
+Base URL: `http(s)://<receiver-host>:8787/api/vms/v1`
+
+Authentication:
+
+```bash
+curl -H "Authorization: Bearer $VMS_INTEGRATION_TOKEN" \
+  http://127.0.0.1:8787/api/vms/v1/status
+```
+
+Endpoints:
+
+- `GET /status` returns receiver health, bridge health, token source, and
+  whether `VMS_MANAGED_MODE=true` is active.
+- `GET /cameras` returns active receiver camera sessions, known devices, and
+  bridge path records.
+- `GET /events?since=<id>` returns receiver events after the optional event id.
+- `POST /cameras/:sessionId/accept` accepts a pending phone session and
+  allocates/reuses its stable bridge path.
+- `POST /devices/:deviceId/trust` trusts a phone device id and enables
+  auto-accept by default.
+- `PATCH /devices/:deviceId` updates trusted-device metadata. Supported fields:
+  `displayName`, `trusted`, `autoAccept`, and `settings` with `resolution`,
+  `frameRate`, `bitrateKbps`, `audioEnabled`, and `preferredFacingMode`.
+- `DELETE /devices/:deviceId` forgets the device, closes active sessions, and
+  removes its bridge path.
+- `GET /logs` returns receiver events and bridge MediaMTX diagnostics.
+- `GET /rtsp-auth` returns RTSP auth status and credentials for VMS storage.
+- `POST /rtsp-auth/rotate` rotates generated RTSP credentials and restarts
+  managed MediaMTX with an updated config. If `RTSP_PASSWORD` is set in the
+  environment, rotate by changing that secret and restarting.
+- `GET /cameras/:deviceId/rtsp-url?credentials=1` returns the stable RTSP URL
+  for a trusted phone device. Add `credentials=1` only from Knoxnet VMS.
+
+Stable identity:
+
+The canonical phone identity is the browser-generated `deviceId`, stored in
+phone `localStorage`. Receiver reconnects from the same device replace the old
+session and use bridge camera id `device-<deviceId>`, so the MediaMTX path and
+RTSP URL stay stable across reconnects.
+
+Managed mode:
+
+Set `VMS_MANAGED_MODE=true` on the receiver when Knoxnet VMS owns the user
+workflow. The standalone dashboard remains available, but it labels the receiver
+as managed so it is not treated as the primary source of truth.
+
+Phone settings contract:
+
+VMS can push settings with `PATCH /devices/:deviceId`. If the phone is connected,
+the receiver sends a `settings-update` signaling message and records the phone's
+`settings-ack`. The phone applies display name, resolution, frame rate, bitrate,
+audio, and facing-camera preference where browser APIs allow; local camera
+choices remain user-friendly for standalone operation.
+
+WHIP diagnostics:
+
+When MediaMTX WHIP relay fails, the bridge stores and returns diagnostics with
+the attempted WHIP endpoint, MediaMTX process/API state, HTTP status/body from
+MediaMTX when available, SDP media/candidate summary, configured ports, and
+recent MediaMTX stdout/stderr. These details are visible through
+`GET /api/vms/v1/logs` and in bridge camera records.
 
 Tradeoffs:
 

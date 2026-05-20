@@ -14,7 +14,7 @@ import {
 } from "./pairing.js";
 import type { BridgeAllocation, BridgeClient } from "./bridge-client.js";
 import type { EventLog, ReceiverEvent } from "./events.js";
-import type { KnownDeviceStore } from "./known-devices.js";
+import type { DeviceSettings, KnownDeviceStore } from "./known-devices.js";
 
 // Message envelopes traveling over the signaling WebSocket.
 // Kept loose on intent (role-specific shape) but typed at the union level.
@@ -48,6 +48,21 @@ export type SignalingMessage =
   | { type: "camera-update"; camera: CameraRecord }
   | { type: "event-log"; events: ReceiverEvent[] }
   | { type: "event"; event: ReceiverEvent }
+  | {
+      type: "settings-update";
+      id: string;
+      sessionId: string;
+      deviceId: string;
+      settings: DeviceSettings;
+    }
+  | {
+      type: "settings-ack";
+      id: string;
+      sessionId: string;
+      deviceId: string;
+      accepted: boolean;
+      message?: string;
+    }
   | {
       type: "announce";
       name?: string;
@@ -100,6 +115,11 @@ export interface SignalingHandle {
   broadcastCameraList: () => void;
   broadcastCameraUpdate: (cam: CameraRecord) => void;
   sendToCamera: (sessionId: string, msg: SignalingMessage) => boolean;
+  sendSettingsUpdateToDevice: (
+    deviceId: string,
+    settings: DeviceSettings,
+    id?: string,
+  ) => { delivered: boolean; sessionId?: string; id: string };
   closeCameraSocket: (sessionId: string, code?: number, reason?: string) => void;
   broadcastEvent: (event: ReceiverEvent) => void;
 }
@@ -457,6 +477,30 @@ export function attachSignaling(
           broadcastCameraUpdate(cam);
           return;
         }
+        case "settings-ack": {
+          if (!ctx.pairingValidated || ctx.role !== "camera") {
+            send(ws, { type: "error", message: "not-paired" });
+            return;
+          }
+          const cam = state.cameras.get(msg.sessionId);
+          if (!cam || cam.sessionId !== ctx.sessionId || cam.deviceId !== msg.deviceId) return;
+          knownDevices.recordSettingsAck(msg.deviceId, {
+            id: msg.id,
+            accepted: msg.accepted,
+            message: msg.message,
+          });
+          emitEvent({
+            type: "settings-acked",
+            sessionId: cam.sessionId,
+            deviceId: cam.deviceId,
+            name: cam.name,
+            message: msg.accepted
+              ? "Phone acknowledged VMS settings"
+              : "Phone rejected VMS settings",
+            reason: msg.message,
+          });
+          return;
+        }
         case "offer":
         case "answer":
         case "ice":
@@ -679,6 +723,26 @@ export function attachSignaling(
     return true;
   }
 
+  function sendSettingsUpdateToDevice(
+    deviceId: string,
+    settings: DeviceSettings,
+    id = `settings-${Date.now().toString(36)}`,
+  ): { delivered: boolean; sessionId?: string; id: string } {
+    const cam = Array.from(state.cameras.values()).find((entry) => entry.deviceId === deviceId);
+    if (!cam?.deviceId) return { delivered: false, id };
+    return {
+      delivered: sendToCamera(cam.sessionId, {
+        type: "settings-update",
+        id,
+        sessionId: cam.sessionId,
+        deviceId: cam.deviceId,
+        settings,
+      }),
+      sessionId: cam.sessionId,
+      id,
+    };
+  }
+
   function closeCameraSocket(
     sessionId: string,
     code = 1000,
@@ -698,6 +762,7 @@ export function attachSignaling(
     broadcastCameraList,
     broadcastCameraUpdate,
     sendToCamera,
+    sendSettingsUpdateToDevice,
     closeCameraSocket,
     broadcastEvent,
   };

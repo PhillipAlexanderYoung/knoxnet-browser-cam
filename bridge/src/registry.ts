@@ -28,6 +28,7 @@ export interface BridgeCamera {
   lastSeen?: string;
   ingestStatus: "allocated" | "publishing" | "recovering" | "offline" | "error";
   lastError?: string;
+  diagnostics?: unknown;
   quality?: CameraQualityInfo;
   whipSessionUrl?: string;
   offlineSince?: string;
@@ -79,6 +80,7 @@ export class CameraRegistry {
         existing.ingestStatus = "recovering";
         existing.status = "recovering";
         existing.lastError = "Publisher reconnecting; stable RTSP path preserved.";
+        existing.diagnostics = undefined;
       }
       delete existing.deleteAfter;
       return existing;
@@ -161,6 +163,7 @@ export class CameraRegistry {
     camera.ingestStatus = "publishing";
     camera.status = "publishing";
     camera.lastError = undefined;
+    camera.diagnostics = undefined;
     camera.whipSessionUrl = params.whipSessionUrl;
     camera.quality = params.quality ?? camera.quality;
     delete camera.offlineSince;
@@ -171,12 +174,13 @@ export class CameraRegistry {
     return camera;
   }
 
-  markError(cameraId: string, error: string): BridgeCamera | undefined {
+  markError(cameraId: string, error: string, diagnostics?: unknown): BridgeCamera | undefined {
     const camera = this.cameras.get(cameraId);
     if (!camera) return undefined;
     camera.ingestStatus = "error";
     camera.status = "error";
     camera.lastError = error;
+    camera.diagnostics = diagnostics;
     camera.updatedAt = new Date().toISOString();
     return camera;
   }

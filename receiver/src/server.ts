@@ -14,11 +14,13 @@ import {
   redactCode,
   removeCamera,
   setCameraStatus,
+  type CameraRecord,
 } from "./pairing.js";
 import { createBridgeClient } from "./bridge-client.js";
 import { attachSignaling } from "./signaling.js";
 import { createEventLog } from "./events.js";
 import { createKnownDeviceStore } from "./known-devices.js";
+import { createVmsAuthMiddleware, loadVmsAuth } from "./vms-auth.js";
 import {
   DEFAULT_PHONE_APP_URL,
   buildPhonePairingUrl,
@@ -74,10 +76,13 @@ const RECEIVER_DATA_DIR =
 const KNOWN_DEVICES_PATH =
   process.env.KNOWN_DEVICES_PATH ??
   path.join(RECEIVER_DATA_DIR, "known-devices.json");
+const VMS_MANAGED_MODE =
+  (process.env.VMS_MANAGED_MODE ?? "false").toLowerCase() === "true";
 
 const state = createPairingState(process.env.PAIRING_CODE);
 const eventLog = createEventLog();
 const knownDevices = createKnownDeviceStore(KNOWN_DEVICES_PATH);
+const vmsAuth = loadVmsAuth(RECEIVER_DATA_DIR);
 let cachedWireGuardSetup:
   | { settingsKey: string; response: Record<string, unknown> }
   | undefined;
@@ -215,6 +220,56 @@ app.use(cors());
 app.use(express.json({ limit: "256kb" }));
 const bridgeClient = createBridgeClient(BRIDGE_URL, log);
 
+async function acceptCameraSession(
+  id: string,
+  acceptedBy = "operator",
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const cam = setCameraStatus(state, id, "accepted");
+  if (!cam) {
+    return { status: 404, body: { ok: false, error: "not-found" } };
+  }
+  if (bridgeClient) {
+    const allocation = await bridgeClient.allocateCamera(cam);
+    if (allocation) {
+      cam.bridge = allocation;
+      publishEvent({
+        type: "bridge-allocated",
+        sessionId: cam.sessionId,
+        deviceId: cam.deviceId,
+        name: cam.name,
+        message: `Bridge path allocated: ${allocation.path}`,
+      });
+    }
+  }
+  const delivered = signaling.sendToCamera(id, {
+    type: "accepted",
+    sessionId: id,
+    bridge: cam.bridge,
+  });
+  signaling.broadcastCameraUpdate(cam);
+  publishEvent({
+    type: "accepted",
+    sessionId: cam.sessionId,
+    deviceId: cam.deviceId,
+    name: cam.name,
+    message: acceptedBy === "vms" ? "Camera accepted by Knoxnet VMS" : "Camera accepted by operator",
+  });
+  return { status: 200, body: { ok: true, camera: cam, delivered } };
+}
+
+function bridgeCameraIdForDevice(deviceId: string): string {
+  const cam = Array.from(state.cameras.values()).find((entry) => entry.deviceId === deviceId);
+  return cam?.bridge?.cameraId ?? `device-${deviceId}`;
+}
+
+function updateActiveDevice(deviceId: string, patch: Partial<CameraRecord>): void {
+  for (const cam of state.cameras.values()) {
+    if (cam.deviceId !== deviceId) continue;
+    Object.assign(cam, patch);
+    signaling.broadcastCameraUpdate(cam);
+  }
+}
+
 app.get("/api/info", async (_req: Request, res: Response) => {
   const urls = receiverUrls();
   const network = networkInfo(PUBLIC_HOST);
@@ -243,6 +298,13 @@ app.get("/api/info", async (_req: Request, res: Response) => {
     staleCameraTtlMs: STALE_CAMERA_TTL_MS,
     bridgeUrl: BRIDGE_URL,
     bridgeHealth,
+    vmsIntegration: {
+      apiBase: "/api/vms/v1",
+      auth: "bearer",
+      tokenSource: vmsAuth.source,
+      tokenFile: vmsAuth.tokenFile,
+      managedMode: VMS_MANAGED_MODE,
+    },
     tls: USE_TLS,
     ts: new Date().toISOString(),
   });
@@ -272,39 +334,8 @@ if ((process.env.RECEIVER_TEST_SHUTDOWN ?? "false").toLowerCase() === "true") {
 }
 
 app.post("/api/cameras/:id/accept", async (req: Request, res: Response) => {
-  const id = req.params.id;
-  const cam = setCameraStatus(state, id, "accepted");
-  if (!cam) {
-    res.status(404).json({ ok: false, error: "not-found" });
-    return;
-  }
-  if (bridgeClient) {
-    const allocation = await bridgeClient.allocateCamera(cam);
-    if (allocation) {
-      cam.bridge = allocation;
-      publishEvent({
-        type: "bridge-allocated",
-        sessionId: cam.sessionId,
-        deviceId: cam.deviceId,
-        name: cam.name,
-        message: `Bridge path allocated: ${allocation.path}`,
-      });
-    }
-  }
-  const delivered = signaling.sendToCamera(id, {
-    type: "accepted",
-    sessionId: id,
-    bridge: cam.bridge,
-  });
-  signaling.broadcastCameraUpdate(cam);
-  publishEvent({
-    type: "accepted",
-    sessionId: cam.sessionId,
-    deviceId: cam.deviceId,
-    name: cam.name,
-    message: "Camera accepted by operator",
-  });
-  res.json({ ok: true, camera: cam, delivered });
+  const result = await acceptCameraSession(req.params.id);
+  res.status(result.status).json(result.body);
 });
 
 app.delete("/api/cameras/:id", async (req: Request, res: Response) => {
@@ -536,6 +567,178 @@ app.post("/api/wireguard/generate", async (req: Request, res: Response) => {
   }
 });
 
+const vmsRouter = express.Router();
+vmsRouter.use(createVmsAuthMiddleware(vmsAuth));
+
+vmsRouter.get("/status", async (_req: Request, res: Response) => {
+  const bridgeHealth = bridgeClient ? await bridgeClient.health() : null;
+  res.json({
+    ok: true,
+    service: "knoxnet-browser-cam-receiver",
+    name: RECEIVER_NAME,
+    managedMode: VMS_MANAGED_MODE,
+    apiVersion: "v1",
+    receiver: {
+      publicHost: PUBLIC_HOST,
+      httpPort: PORT,
+      wsPath: "/ws",
+      tls: USE_TLS,
+      autoAcceptKnown: AUTO_ACCEPT_KNOWN,
+      autoAcceptAll: AUTO_ACCEPT_ALL,
+      staleCameraTtlMs: STALE_CAMERA_TTL_MS,
+    },
+    bridge: {
+      url: BRIDGE_URL,
+      health: bridgeHealth,
+    },
+    token: {
+      source: vmsAuth.source,
+      tokenFile: vmsAuth.tokenFile,
+      generated: vmsAuth.generated,
+    },
+    ts: new Date().toISOString(),
+  });
+});
+
+vmsRouter.get("/cameras", async (_req: Request, res: Response) => {
+  const bridgeCameras = bridgeClient ? await bridgeClient.listCameras() : [];
+  res.json({
+    ok: true,
+    cameras: listCameras(state),
+    devices: knownDevices.list(),
+    bridgeCameras,
+  });
+});
+
+vmsRouter.get("/events", (req: Request, res: Response) => {
+  const since = Number(req.query.since ?? 0);
+  const events = eventLog.list().filter((event) =>
+    Number.isFinite(since) && since > 0 ? event.id > since : true,
+  );
+  res.json({ ok: true, events });
+});
+
+vmsRouter.post("/cameras/:sessionId/accept", async (req: Request, res: Response) => {
+  const result = await acceptCameraSession(req.params.sessionId, "vms");
+  res.status(result.status).json(result.body);
+});
+
+vmsRouter.post("/devices/:deviceId/trust", (req: Request, res: Response) => {
+  const deviceId = req.params.deviceId;
+  const autoAccept =
+    typeof req.body?.autoAccept === "boolean" ? req.body.autoAccept : true;
+  const known = knownDevices.updateTrust(deviceId, {
+    trusted: true,
+    autoAccept,
+  });
+  if (!known) {
+    res.status(404).json({ ok: false, error: "not-found" });
+    return;
+  }
+  updateActiveDevice(deviceId, { trusted: true });
+  publishEvent({
+    type: "device-trusted",
+    deviceId,
+    name: known.name,
+    message: autoAccept ? "Device trusted for VMS auto-accept" : "Device trusted by VMS",
+  });
+  signaling.broadcastCameraList();
+  res.json({ ok: true, device: known });
+});
+
+vmsRouter.patch("/devices/:deviceId", (req: Request, res: Response) => {
+  const deviceId = req.params.deviceId;
+  const known = knownDevices.updateDevice(deviceId, {
+    name: typeof req.body?.name === "string" ? req.body.name : undefined,
+    displayName:
+      typeof req.body?.displayName === "string" ? req.body.displayName : undefined,
+    trusted: typeof req.body?.trusted === "boolean" ? req.body.trusted : undefined,
+    autoAccept:
+      typeof req.body?.autoAccept === "boolean" ? req.body.autoAccept : undefined,
+    settings: typeof req.body?.settings === "object" ? req.body.settings : undefined,
+  });
+  if (!known) {
+    res.status(404).json({ ok: false, error: "not-found" });
+    return;
+  }
+  const activePatch: Partial<CameraRecord> = {
+    name: known.displayName || known.name,
+    trusted: known.trusted,
+  };
+  updateActiveDevice(deviceId, activePatch);
+  const settings = known.settings;
+  const settingsDelivery = settings
+    ? signaling.sendSettingsUpdateToDevice(deviceId, settings)
+    : { delivered: false, id: "" };
+  publishEvent({
+    type: "device-updated",
+    deviceId,
+    name: known.name,
+    message: settings
+      ? "VMS updated trusted-device settings"
+      : "VMS updated trusted-device metadata",
+    reason: settingsDelivery.delivered ? `settings-id=${settingsDelivery.id}` : undefined,
+  });
+  signaling.broadcastCameraList();
+  res.json({ ok: true, device: known, settingsDelivery });
+});
+
+vmsRouter.delete("/devices/:deviceId", async (req: Request, res: Response) => {
+  const deviceId = req.params.deviceId;
+  const active = listCameras(state).filter((cam) => cam.deviceId === deviceId);
+  for (const cam of active) {
+    signaling.closeCameraSocket(cam.sessionId, 1000, "device-removed-by-vms");
+    removeCamera(state, cam.sessionId);
+    if (bridgeClient) await bridgeClient.removeCamera(cam, true);
+  }
+  const removed = knownDevices.forget(deviceId);
+  if (removed || active.length > 0) {
+    publishEvent({
+      type: "device-forgotten",
+      deviceId,
+      message: "Device removed by Knoxnet VMS",
+    });
+    signaling.broadcastCameraList();
+  }
+  res.json({ ok: removed || active.length > 0, removed, sessionsRemoved: active.length });
+});
+
+vmsRouter.get("/logs", async (_req: Request, res: Response) => {
+  res.json({
+    ok: true,
+    events: eventLog.list(),
+    bridge: bridgeClient ? await bridgeClient.logs() : null,
+  });
+});
+
+vmsRouter.get("/rtsp-auth", async (_req: Request, res: Response) => {
+  if (!bridgeClient) {
+    res.status(503).json({ ok: false, error: "bridge-disabled" });
+    return;
+  }
+  res.json(await bridgeClient.rtspAuth());
+});
+
+vmsRouter.post("/rtsp-auth/rotate", async (_req: Request, res: Response) => {
+  if (!bridgeClient) {
+    res.status(503).json({ ok: false, error: "bridge-disabled" });
+    return;
+  }
+  res.json(await bridgeClient.rotateRtspAuth());
+});
+
+vmsRouter.get("/cameras/:deviceId/rtsp-url", async (req: Request, res: Response) => {
+  if (!bridgeClient) {
+    res.status(503).json({ ok: false, error: "bridge-disabled" });
+    return;
+  }
+  const includeCredentials = req.query.credentials === "1";
+  const cameraId = bridgeCameraIdForDevice(req.params.deviceId);
+  res.json(await bridgeClient.rtspUrl(cameraId, includeCredentials));
+});
+
+app.use("/api/vms/v1", vmsRouter);
+
 app.use("/docs", express.static(DOCS_DIR));
 app.use(express.static(STATIC_DIR));
 
@@ -621,6 +824,17 @@ httpServer.listen(PORT, HOST, () => {
   log(`Phone pairing URL: ${urls.phonePairingUrl}`);
   log(`Scan this URL with the iPhone Camera app to open the phone app.`);
   log(`Known device store: ${KNOWN_DEVICES_PATH}`);
+  log(
+    `VMS API:       /api/vms/v1 auth=bearer tokenSource=${vmsAuth.source}` +
+      (vmsAuth.tokenFile ? ` tokenFile=${vmsAuth.tokenFile}` : ""),
+  );
+  if (vmsAuth.generated) {
+    log(`Generated VMS integration token saved to ${vmsAuth.tokenFile}`);
+    log(`VMS integration token: ${vmsAuth.token}`);
+  }
+  if (VMS_MANAGED_MODE) {
+    log("VMS_MANAGED_MODE=true: dashboard labels this receiver as managed by Knoxnet VMS.");
+  }
   log(`AUTO_ACCEPT_KNOWN=${AUTO_ACCEPT_KNOWN}: trusted devices can reconnect without manual accept.`);
   if (AUTO_ACCEPT_ALL) {
     log("WARNING: AUTO_ACCEPT_ALL=true: any valid pairing-code camera will be auto-accepted.");

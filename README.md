@@ -293,6 +293,9 @@ Important bridge environment variables:
 | `RTSP_USERNAME` | `knoxnet` | Username for RTSP/NVR read access. |
 | `RTSP_PASSWORD` | generated | Password for RTSP/NVR read access. If omitted, the bridge generates one on first start. |
 | `RTSP_PASSWORD_FILE` | `<BRIDGE_RUNTIME_DIR>/rtsp-password` | File used to persist the generated password with restrictive permissions. |
+| `VMS_INTEGRATION_TOKEN` | generated | Receiver API bearer token for Knoxnet VMS calls to `/api/vms/v1/*`. |
+| `VMS_INTEGRATION_TOKEN_FILE` | `<RECEIVER_DATA_DIR>/vms-integration-token` | File used to persist the generated VMS integration token. |
+| `VMS_MANAGED_MODE` | `false` | Set `true` when Knoxnet VMS owns pairing/trust/RTSP management; the dashboard shows a managed-mode banner. |
 
 Current RTSP status: the bridge implements stable path allocation,
 MediaMTX config generation/process management, receiver-side WHIP relay, and
@@ -303,7 +306,10 @@ copy actions for credentialed NVR URLs and URLs without embedded credentials.
 If `RTSP_PASSWORD` is not set, the first bridge start generates a strong random
 password, writes it to `RTSP_PASSWORD_FILE`, and logs it once. Rotate credentials
 by setting a new `RTSP_PASSWORD` or stopping the bridge, deleting the generated
-password file, and starting the bridge again. The receiver marks cameras
+password file, and starting the bridge again. Knoxnet VMS can also use the
+authenticated receiver API to inspect auth state, rotate generated credentials,
+and fetch credentialed RTSP URLs without exposing credentials to the phone app.
+The receiver marks cameras
 `negotiating` while the WHIP offer is being posted to MediaMTX and only marks
 the bridge `publishing` after MediaMTX returns an answer. A complete end-to-end
 RTSP stream requires a MediaMTX binary available on `PATH`, in
@@ -311,6 +317,16 @@ RTSP stream requires a MediaMTX binary available on `PATH`, in
 `MEDIAMTX_BINARY`. WHIP trickle-ICE PATCH support is marked as follow-up in code.
 Never expose RTSP directly to the internet; use WireGuard or another private VPN
 for remote NVR access.
+
+Knoxnet VMS integration API: start receiver/bridge as usual, then call
+`/api/vms/v1/*` on the receiver with
+`Authorization: Bearer <VMS_INTEGRATION_TOKEN>`. If the token env var is omitted,
+the receiver generates one on first start, saves it to
+`receiver/data/vms-integration-token`, and logs it once. See
+[`docs/knoxnet-vms-integration.md`](docs/knoxnet-vms-integration.md) for the
+endpoint list covering status, cameras, events, accept/trust, device settings,
+cleanup, RTSP credential lifecycle, credentialed RTSP URLs, and MediaMTX/WHIP
+diagnostics.
 
 ## Cloudflare-hosted phone app and remote mode
 

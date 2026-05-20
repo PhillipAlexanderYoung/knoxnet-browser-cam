@@ -98,6 +98,29 @@ export function loadConfig(): BridgeConfig {
   };
 }
 
+export function rotateRtspPassword(config: BridgeConfig): { password: string; passwordFile: string } {
+  if (process.env.RTSP_PASSWORD?.trim()) {
+    throw new Error("rtsp-password-env-managed");
+  }
+  const password = randomBytes(24).toString("base64url");
+  mkdirSync(path.dirname(config.rtspPasswordFile) || config.runtimeDir, {
+    recursive: true,
+    mode: 0o700,
+  });
+  writeFileSync(config.rtspPasswordFile, `${password}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  try {
+    chmodSync(config.rtspPasswordFile, 0o600);
+  } catch {
+    // Best effort only; file creation mode is the primary protection.
+  }
+  config.rtspPassword = password;
+  config.rtspPasswordGenerated = true;
+  return { password, passwordFile: config.rtspPasswordFile };
+}
+
 function loadRtspCredentials(
   runtimeDir: string,
   passwordFile: string,

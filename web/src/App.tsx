@@ -224,6 +224,24 @@ export default function App() {
     saveSettings(next);
   }, []);
 
+  const applyReceiverSettings = useCallback((patch: Partial<CameraSettings>) => {
+    setSettings((current) => {
+      const next = {
+        ...current,
+        cameraName: patch.cameraName ?? current.cameraName,
+        resolution: patch.resolution ?? current.resolution,
+        frameRate: patch.frameRate ?? current.frameRate,
+        bitrateKbps: patch.bitrateKbps ?? current.bitrateKbps,
+        audioEnabled: patch.audioEnabled ?? current.audioEnabled,
+        preferredFacingMode:
+          patch.preferredFacingMode ?? current.preferredFacingMode,
+      };
+      saveSettings(next);
+      return next;
+    });
+    setToast("Receiver settings applied");
+  }, []);
+
   const handleSave = useCallback(() => {
     saveSettings(settings);
     setToast("Settings saved");
@@ -313,6 +331,7 @@ export default function App() {
           onChangeAudio={onChangeAudio}
           autoStart={autoStart}
           clientDeviceId={clientDeviceId}
+          onReceiverSettings={applyReceiverSettings}
           onDirectCamera={() => setDirectMode("camera")}
           onDirectViewer={() => setDirectMode("viewer")}
           onQrResult={handleQrResult}

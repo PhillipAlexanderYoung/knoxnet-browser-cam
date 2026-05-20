@@ -31,6 +31,7 @@ interface CameraPageProps {
   onChangeAudio: (next: boolean) => void;
   autoStart: boolean;
   clientDeviceId: string;
+  onReceiverSettings: (settings: Partial<CameraSettings>) => void;
   onDirectCamera: () => void;
   onDirectViewer: () => void;
   onQrResult: (result: DirectViewQrResult) => void;
@@ -126,6 +127,7 @@ export function CameraPage({
   onChangeAudio,
   autoStart,
   clientDeviceId,
+  onReceiverSettings,
   onDirectCamera,
   onDirectViewer,
   onQrResult,
@@ -170,6 +172,16 @@ export function CameraPage({
         facingMode: settings.preferredFacingMode,
         deviceId: settings.preferredDeviceId,
         maxBitrateKbps: settings.bitrateKbps,
+        onSettingsUpdate: (next) => {
+          onReceiverSettings({
+            cameraName: next.displayName,
+            resolution: next.resolution,
+            frameRate: next.frameRate,
+            bitrateKbps: next.bitrateKbps,
+            audioEnabled: next.audioEnabled,
+            preferredFacingMode: next.preferredFacingMode,
+          });
+        },
       });
     } catch (err) {
       const blocked = isCameraPermissionDeniedError(err);
@@ -180,7 +192,7 @@ export function CameraPage({
           : (err as Error)?.message ?? "Failed to start stream",
       );
     }
-  }, [api, cameraAccessError, clientDeviceId, settings]);
+  }, [api, cameraAccessError, clientDeviceId, onReceiverSettings, settings]);
 
   const retryCameraAccess = useCallback(async () => {
     if (retryingCamera) return;

@@ -8,12 +8,20 @@ export interface MediaMtxStatus {
   apiReachable: boolean;
   binary: string;
   configPath: string;
+  ports: {
+    rtsp: number;
+    webrtc: number;
+    webrtcUdp: number;
+    api: number;
+  };
   lastError?: string;
 }
 
 export class MediaMtxManager {
   private child: ChildProcess | null = null;
   private lastError: string | undefined;
+  private stdoutLines: string[] = [];
+  private stderrLines: string[] = [];
 
   constructor(private readonly config: BridgeConfig) {}
 
@@ -32,10 +40,14 @@ export class MediaMtxManager {
     });
 
     this.child.stdout?.on("data", (chunk) => {
-      process.stdout.write(prefixLines("[mediamtx]", chunk.toString()));
+      const text = chunk.toString();
+      appendLines(this.stdoutLines, text);
+      process.stdout.write(prefixLines("[mediamtx]", text));
     });
     this.child.stderr?.on("data", (chunk) => {
-      process.stderr.write(prefixLines("[mediamtx]", chunk.toString()));
+      const text = chunk.toString();
+      appendLines(this.stderrLines, text);
+      process.stderr.write(prefixLines("[mediamtx]", text));
     });
     this.child.on("error", (err) => {
       this.lastError = err.message;
@@ -68,6 +80,11 @@ export class MediaMtxManager {
     });
   }
 
+  async restart(): Promise<void> {
+    await this.stop();
+    await this.start();
+  }
+
   async status(): Promise<MediaMtxStatus> {
     return {
       managed: this.config.manageMediaMtx,
@@ -75,7 +92,20 @@ export class MediaMtxManager {
       apiReachable: await this.isApiReachable(),
       binary: this.config.mediaMtxBinary,
       configPath: this.config.mediaMtxConfigPath,
+      ports: {
+        rtsp: this.config.mediaMtxRtspPort,
+        webrtc: this.config.mediaMtxWebRtcPort,
+        webrtcUdp: this.config.mediaMtxWebRtcUdpPort,
+        api: this.config.mediaMtxApiPort,
+      },
       lastError: this.lastError,
+    };
+  }
+
+  recentLogs(limit = 40): { stdout: string[]; stderr: string[] } {
+    return {
+      stdout: this.stdoutLines.slice(-limit),
+      stderr: this.stderrLines.slice(-limit),
     };
   }
 
@@ -94,6 +124,13 @@ export class MediaMtxManager {
       clearTimeout(timer);
     }
   }
+}
+
+function appendLines(target: string[], value: string, limit = 200): void {
+  for (const line of value.split(/\r?\n/).filter(Boolean)) {
+    target.push(line);
+  }
+  if (target.length > limit) target.splice(0, target.length - limit);
 }
 
 function prefixLines(prefix: string, value: string): string {

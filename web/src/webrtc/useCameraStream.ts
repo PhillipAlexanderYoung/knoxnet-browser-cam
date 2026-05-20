@@ -13,6 +13,7 @@ import {
   SignalingClient,
   type CameraCapabilities,
   type ConnectionState,
+  type ReceiverSettingsUpdate,
   type SignalingStateDetail,
 } from "./signaling-client";
 
@@ -181,6 +182,7 @@ export interface StartParams {
   facingMode: "user" | "environment";
   deviceId?: string;
   maxBitrateKbps: number;
+  onSettingsUpdate?: (settings: ReceiverSettingsUpdate) => void;
 }
 
 export interface CameraStreamApi {
@@ -1128,6 +1130,39 @@ export function useCameraStream(): CameraStreamApi {
             await peerRef.current?.addRemoteIce(msg.candidate);
           } else if (msg.type === "bye") {
             await stop();
+          } else if (msg.type === "settings-update") {
+            const currentSessionId = sessionIdRef.current;
+            if (!currentSessionId || msg.sessionId !== currentSessionId) return;
+            let accepted = true;
+            let message = "applied";
+            try {
+              params.onSettingsUpdate?.(msg.settings);
+              if (msg.settings.resolution || msg.settings.frameRate) {
+                await applyTrackConstraints({
+                  resolution: msg.settings.resolution,
+                  frameRate: msg.settings.frameRate,
+                });
+              }
+              if (typeof msg.settings.bitrateKbps === "number") {
+                await applyMaxBitrate(msg.settings.bitrateKbps);
+              }
+              if (typeof msg.settings.audioEnabled === "boolean" && streamRef.current) {
+                for (const t of streamRef.current.getAudioTracks()) {
+                  t.enabled = msg.settings.audioEnabled;
+                }
+              }
+            } catch (err) {
+              accepted = false;
+              message = (err as Error)?.message ?? "settings update failed";
+            }
+            client.send({
+              type: "settings-ack",
+              id: msg.id,
+              sessionId: currentSessionId,
+              deviceId: params.clientDeviceId,
+              accepted,
+              message,
+            });
           } else if (msg.type === "error") {
             scheduleReconnect("receiver-error", msg.message, { kind: "receiver" });
           }
@@ -1154,6 +1189,8 @@ export function useCameraStream(): CameraStreamApi {
     },
     [
       acquirePreview,
+      applyMaxBitrate,
+      applyTrackConstraints,
       cameraAccessError,
       cleanupConnection,
       clearConnectionTimers,

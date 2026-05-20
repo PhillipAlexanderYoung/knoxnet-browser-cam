@@ -16,6 +16,7 @@ export interface BridgePublishResult {
   answer?: { type: "answer"; sdp: string };
   camera?: BridgeAllocation;
   error?: string;
+  diagnostics?: unknown;
 }
 
 export interface BridgeClient {
@@ -26,7 +27,12 @@ export interface BridgeClient {
   ) => Promise<BridgePublishResult>;
   markCameraOffline: (camera: CameraRecord, reason?: string) => Promise<void>;
   removeCamera: (camera: CameraRecord | string, permanent?: boolean) => Promise<void>;
+  listCameras: () => Promise<BridgeAllocation[]>;
   health: () => Promise<{ ok: boolean; mediamtx?: unknown; rtspAuth?: unknown; error?: string }>;
+  logs: () => Promise<unknown>;
+  rtspAuth: () => Promise<unknown>;
+  rotateRtspAuth: () => Promise<unknown>;
+  rtspUrl: (cameraId: string, includeCredentials?: boolean) => Promise<unknown>;
 }
 
 export function createBridgeClient(
@@ -104,6 +110,7 @@ export function createBridgeClient(
         answer: result.ok ? result.body?.sdp : undefined,
         camera: result.body?.camera,
         error: result.ok ? undefined : result.error,
+        diagnostics: (result.body as { diagnostics?: unknown } | null)?.diagnostics,
       };
     },
 
@@ -130,6 +137,14 @@ export function createBridgeClient(
       });
     },
 
+    async listCameras() {
+      const result = await requestJson<{ cameras: BridgeAllocation[] }>(
+        "/api/cameras",
+        { method: "GET" },
+      );
+      return result.ok ? (result.body?.cameras ?? []) : [];
+    },
+
     async health() {
       const result = await requestJson<{ ok: boolean; mediamtx?: unknown; rtspAuth?: unknown }>(
         "/api/health",
@@ -141,6 +156,30 @@ export function createBridgeClient(
         rtspAuth: result.body?.rtspAuth,
         error: result.error,
       };
+    },
+
+    async logs() {
+      const result = await requestJson<unknown>("/api/logs", { method: "GET" });
+      return result.body ?? { ok: false, error: result.error };
+    },
+
+    async rtspAuth() {
+      const result = await requestJson<unknown>("/api/rtsp-auth", { method: "GET" });
+      return result.body ?? { ok: false, error: result.error };
+    },
+
+    async rotateRtspAuth() {
+      const result = await requestJson<unknown>("/api/rtsp-auth/rotate", { method: "POST" });
+      return result.body ?? { ok: false, error: result.error };
+    },
+
+    async rtspUrl(cameraId, includeCredentials = false) {
+      const suffix = includeCredentials ? "?credentials=1" : "";
+      const result = await requestJson<unknown>(
+        `/api/cameras/${encodeURIComponent(cameraId)}/rtsp-url${suffix}`,
+        { method: "GET" },
+      );
+      return result.body ?? { ok: false, error: result.error };
     },
   };
 }

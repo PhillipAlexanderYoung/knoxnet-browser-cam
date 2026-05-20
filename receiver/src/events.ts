@@ -11,7 +11,9 @@ export type ReceiverEventType =
   | "bridge-failed"
   | "stale-cleaned"
   | "device-trusted"
-  | "device-forgotten";
+  | "device-forgotten"
+  | "device-updated"
+  | "settings-acked";
 
 export interface ReceiverEvent {
   id: number;

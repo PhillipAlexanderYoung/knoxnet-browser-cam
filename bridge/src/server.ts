@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, rtspUrlForPath } from "./config.js";
+import { loadConfig, rotateRtspPassword, rtspUrlForPath } from "./config.js";
 import { MediaMtxManager } from "./mediamtx.js";
 import { CameraRegistry, type CameraQualityInfo } from "./registry.js";
 
@@ -109,6 +109,9 @@ async function handleWhipRelay(
     return;
   }
 
+  let upstreamStatus: number | undefined;
+  let upstreamBody = "";
+  const offerSummary = summarizeSdp(offerSdp);
   try {
     log(`WHIP offer received cameraId=${cameraId} path=${camera.path}`);
     if (camera.whipSessionUrl) {
@@ -127,7 +130,9 @@ async function handleWhipRelay(
       },
       body: offerSdp,
     });
+    upstreamStatus = upstream.status;
     const answerSdp = await upstream.text();
+    upstreamBody = answerSdp;
     if (!upstream.ok) {
       throw new Error(`mediamtx-whip-${upstream.status}: ${answerSdp.slice(0, 200)}`);
     }
@@ -145,10 +150,55 @@ async function handleWhipRelay(
     });
   } catch (err) {
     const message = (err as Error)?.message ?? "whip-relay-failed";
-    registry.markError(cameraId, message);
+    const diagnostics = {
+      attemptedWhipUrl: camera.whipUrl,
+      mediamtx: await mediaMtx.status(),
+      httpStatus: upstreamStatus ?? null,
+      httpBody: upstreamBody ? upstreamBody.slice(0, 2000) : null,
+      offerSummary,
+      configuredPorts: {
+        rtsp: config.mediaMtxRtspPort,
+        webrtc: config.mediaMtxWebRtcPort,
+        webrtcUdp: config.mediaMtxWebRtcUdpPort,
+        api: config.mediaMtxApiPort,
+      },
+      recentLogs: mediaMtx.recentLogs(25),
+    };
+    registry.markError(cameraId, message, diagnostics);
     log(`WHIP publish failed cameraId=${cameraId}: ${message}`);
-    json(res, 502, { ok: false, error: "whip-relay-failed", detail: message });
+    json(res, 502, {
+      ok: false,
+      error: "whip-relay-failed",
+      detail: message,
+      diagnostics,
+      camera: registry.get(cameraId),
+    });
   }
+}
+
+function summarizeSdp(sdp: string): Record<string, unknown> {
+  const lines = sdp.split(/\r?\n/);
+  const candidates = lines.filter((line) => line.startsWith("a=candidate:"));
+  const media = lines.filter((line) => line.startsWith("m="));
+  const codecs = lines
+    .filter((line) => line.startsWith("a=rtpmap:"))
+    .map((line) => line.slice("a=rtpmap:".length))
+    .slice(0, 20);
+  return {
+    bytes: Buffer.byteLength(sdp),
+    media,
+    candidateCount: candidates.length,
+    candidateTypes: Array.from(
+      new Set(
+        candidates
+          .map((line) => line.match(/\styp\s+([a-z0-9]+)/i)?.[1])
+          .filter(Boolean),
+      ),
+    ),
+    codecs,
+    hasIceUfrag: lines.some((line) => line.startsWith("a=ice-ufrag:")),
+    hasFingerprint: lines.some((line) => line.startsWith("a=fingerprint:")),
+  };
 }
 
 const server = createServer(async (req, res) => {
@@ -185,6 +235,76 @@ const server = createServer(async (req, res) => {
         cameras: registry.list(),
         ts: new Date().toISOString(),
       });
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/logs") {
+      json(res, 200, {
+        ok: true,
+        mediamtx: await mediaMtx.status(),
+        logs: mediaMtx.recentLogs(80),
+        cameras: registry.list().map((camera) => ({
+          cameraId: camera.cameraId,
+          path: camera.path,
+          ingestStatus: camera.ingestStatus,
+          lastError: camera.lastError,
+          diagnostics: camera.diagnostics,
+          updatedAt: camera.updatedAt,
+        })),
+        ts: new Date().toISOString(),
+      });
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/rtsp-auth") {
+      json(res, 200, {
+        ok: true,
+        required: config.rtspAuthRequired,
+        username: config.rtspAuthRequired ? config.rtspUsername : null,
+        password: config.rtspAuthRequired ? config.rtspPassword : null,
+        passwordFile: config.rtspAuthRequired && !process.env.RTSP_PASSWORD
+          ? config.rtspPasswordFile
+          : null,
+        generated: config.rtspPasswordGenerated,
+      });
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/rtsp-auth/rotate") {
+      if (!config.rtspAuthRequired) {
+        json(res, 400, { ok: false, error: "rtsp-auth-disabled" });
+        return;
+      }
+      try {
+        const rotated = rotateRtspPassword(config);
+        await mediaMtx.restart();
+        for (const camera of registry.list()) {
+          camera.rtspUrl = rtspUrlForPath(config, camera.path);
+          camera.rtspUrlRedacted = rtspUrlForPath(config, camera.path, {
+            credentials: "redacted",
+          });
+        }
+        json(res, 200, {
+          ok: true,
+          required: true,
+          username: config.rtspUsername,
+          password: rotated.password,
+          passwordFile: rotated.passwordFile,
+          generated: config.rtspPasswordGenerated,
+          mediamtx: await mediaMtx.status(),
+        });
+      } catch (err) {
+        const detail = (err as Error)?.message ?? String(err);
+        const status = detail === "rtsp-password-env-managed" ? 409 : 500;
+        json(res, status, {
+          ok: false,
+          error: detail,
+          message:
+            detail === "rtsp-password-env-managed"
+              ? "RTSP_PASSWORD is set in the environment; rotate by changing that secret and restarting."
+              : "RTSP credential rotation failed.",
+        });
+      }
       return;
     }
 

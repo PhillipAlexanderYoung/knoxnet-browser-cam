@@ -82,6 +82,10 @@ function renderInfo(info) {
   if (state.network.data) {
     renderNetwork(state.network.data);
   }
+  const managedBanner = el("vms-managed-banner");
+  if (managedBanner) {
+    managedBanner.classList.toggle("hidden", !info.vmsIntegration?.managedMode);
+  }
   const wireguardReceiverUrl = recommendedWireGuardReceiverUrl(info);
   for (const id of ["wireguard-receiver-url", "remote-wireguard-url"]) {
     const node = el(id);
@@ -115,7 +119,8 @@ function renderInfo(info) {
   }
   const mode = el("accept-mode");
   if (mode) {
-    mode.textContent = `Auto-accept known: ${info.autoAcceptKnown ? "on" : "off"} • Auto-accept all: ${info.autoAcceptAll ? "on" : "off"} • stale TTL: ${Math.round((info.staleCameraTtlMs ?? 0) / 1000)}s`;
+    const managed = info.vmsIntegration?.managedMode ? " • Managed by Knoxnet VMS" : "";
+    mode.textContent = `Auto-accept known: ${info.autoAcceptKnown ? "on" : "off"} • Auto-accept all: ${info.autoAcceptAll ? "on" : "off"} • stale TTL: ${Math.round((info.staleCameraTtlMs ?? 0) / 1000)}s${managed}`;
   }
   const remoteMode = el("remote-mode");
   if (remoteMode) {

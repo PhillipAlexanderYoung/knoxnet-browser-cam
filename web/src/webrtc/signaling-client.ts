@@ -28,6 +28,15 @@ export type CameraQualityInfo = {
   message?: string | null;
 };
 
+export type ReceiverSettingsUpdate = {
+  displayName?: string;
+  resolution?: "auto" | "480p" | "720p" | "1080p";
+  frameRate?: 5 | 10 | 15 | 30;
+  bitrateKbps?: 500 | 1000 | 2000 | 4000;
+  audioEnabled?: boolean;
+  preferredFacingMode?: "user" | "environment";
+};
+
 export type IncomingMessage =
   | { type: "hello-ack"; paired: boolean; sessionId?: string; reason?: string }
   | { type: "accepted"; sessionId: string; bridge?: BridgeAllocation }
@@ -35,6 +44,13 @@ export type IncomingMessage =
   | { type: "answer"; sessionId: string; sdp: RTCSessionDescriptionInit }
   | { type: "ice"; sessionId: string; candidate: RTCIceCandidateInit | null }
   | { type: "bye"; sessionId: string }
+  | {
+      type: "settings-update";
+      id: string;
+      sessionId: string;
+      deviceId: string;
+      settings: ReceiverSettingsUpdate;
+    }
   | { type: "error"; message: string }
   | { type: "pong" };
 
@@ -69,6 +85,14 @@ export type OutgoingMessage =
   | { type: "offer"; sessionId: string; sdp: RTCSessionDescriptionInit }
   | { type: "ice"; sessionId: string; candidate: RTCIceCandidateInit | null }
   | { type: "quality"; sessionId: string; quality: CameraQualityInfo }
+  | {
+      type: "settings-ack";
+      id: string;
+      sessionId: string;
+      deviceId: string;
+      accepted: boolean;
+      message?: string;
+    }
   | { type: "bye"; sessionId: string }
   | { type: "ping" };
 
