@@ -45,7 +45,8 @@ const HOST = process.env.HOST ?? "0.0.0.0";
 const PORT = Number(process.env.PORT ?? 8787);
 const RECEIVER_NAME =
   process.env.RECEIVER_NAME ?? `${os.hostname()}-knoxnet-receiver`;
-const PUBLIC_HOST = process.env.PUBLIC_HOST ?? detectLanIp() ?? "localhost";
+const PUBLIC_HOST_OVERRIDE = process.env.PUBLIC_HOST?.trim();
+const PUBLIC_HOST = PUBLIC_HOST_OVERRIDE || recommendedNetworkAddress()?.address || "localhost";
 const AUTO_ACCEPT_KNOWN =
   (process.env.AUTO_ACCEPT_KNOWN ?? "true").toLowerCase() === "true";
 const AUTO_ACCEPT_ALL =
@@ -92,20 +93,102 @@ function log(...args: unknown[]): void {
   console.log(`[receiver]`, new Date().toISOString(), ...args);
 }
 
-function detectLanIp(): string | undefined {
+interface NetworkAddress {
+  id: string;
+  name: string;
+  address: string;
+  cidr?: string | null;
+  mac?: string;
+  private: boolean;
+  virtual: boolean;
+}
+
+function listNetworkAddresses(): NetworkAddress[] {
   const ifaces = os.networkInterfaces();
-  for (const name of Object.keys(ifaces)) {
+  const addresses: NetworkAddress[] = [];
+  for (const name of Object.keys(ifaces).sort()) {
     for (const info of ifaces[name] ?? []) {
       if (info.family === "IPv4" && !info.internal) {
-        return info.address;
+        addresses.push({
+          id: `${name}-${info.address}`,
+          name,
+          address: info.address,
+          cidr: info.cidr,
+          mac: info.mac,
+          private: isPrivateIpv4(info.address),
+          virtual: isLikelyVirtualInterface(name, info.address),
+        });
       }
     }
   }
-  return undefined;
+  return addresses.sort((a, b) => scoreNetworkAddress(b) - scoreNetworkAddress(a));
 }
 
-function receiverUrls() {
-  return buildReceiverUrls(urlConfig, state.code);
+function recommendedNetworkAddress(addresses = listNetworkAddresses()): NetworkAddress | undefined {
+  if (PUBLIC_HOST_OVERRIDE) {
+    const override = addresses.find((addr) => addr.address === PUBLIC_HOST_OVERRIDE);
+    if (override) return override;
+  }
+  return addresses[0];
+}
+
+function scoreNetworkAddress(addr: NetworkAddress): number {
+  let score = 0;
+  if (addr.private) score += 100;
+  if (!addr.virtual) score += 50;
+  if (/^(en|eth|wlan|wl|wifi)/i.test(addr.name)) score += 20;
+  if (/^192\.168\./.test(addr.address)) score += 10;
+  if (/^10\./.test(addr.address)) score += 8;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(addr.address)) score += 6;
+  if (/^169\.254\./.test(addr.address)) score -= 100;
+  return score;
+}
+
+function isPrivateIpv4(address: string): boolean {
+  return (
+    /^10\./.test(address) ||
+    /^192\.168\./.test(address) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(address)
+  );
+}
+
+function isLikelyVirtualInterface(name: string, address: string): boolean {
+  return (
+    /^(docker|br-|veth|virbr|vmnet|tun|tap|wg|zt|tailscale|cni|flannel|kube)/i.test(name) ||
+    /^169\.254\./.test(address)
+  );
+}
+
+function receiverUrls(host = PUBLIC_HOST) {
+  return buildReceiverUrls({ ...urlConfig, publicHost: host }, state.code);
+}
+
+function selectedNetworkHost(rawHost: unknown): string {
+  if (typeof rawHost !== "string" || !rawHost.trim()) return PUBLIC_HOST;
+  const requested = rawHost.trim();
+  const addresses = listNetworkAddresses();
+  return addresses.some((addr) => addr.address === requested) ? requested : PUBLIC_HOST;
+}
+
+function networkInfo(host = PUBLIC_HOST) {
+  const addresses = listNetworkAddresses();
+  const recommended = recommendedNetworkAddress(addresses);
+  const selected = addresses.find((addr) => addr.address === host) ?? recommended;
+  const selectedHost = selected?.address ?? host;
+  const urls = receiverUrls(selectedHost);
+  return {
+    ok: true,
+    addresses,
+    recommendedAddress: recommended,
+    selectedAddress: selected,
+    selectedHost,
+    localDashboardUrl: urls.dashboardUrl,
+    localReceiverWsUrl: urls.receiverWsUrl,
+    localPhonePairingUrl: urls.phonePairingUrl,
+    currentQrUrl: `/api/pair-qr?host=${encodeURIComponent(selectedHost)}`,
+    connectivity:
+      "Works when this phone can reach the receiver: same Wi-Fi/LAN, or connected to the same WireGuard VPN.",
+  };
 }
 
 const app = express();
@@ -115,6 +198,7 @@ const bridgeClient = createBridgeClient(BRIDGE_URL, log);
 
 app.get("/api/info", async (_req: Request, res: Response) => {
   const urls = receiverUrls();
+  const network = networkInfo(PUBLIC_HOST);
   const bridgeHealth = bridgeClient ? await bridgeClient.health() : null;
   res.json({
     ok: true,
@@ -127,6 +211,7 @@ app.get("/api/info", async (_req: Request, res: Response) => {
     pairingUrl: urls.phonePairingUrl,
     dashboardUrl: urls.dashboardUrl,
     receiverWsUrl: urls.receiverWsUrl,
+    network,
     phoneAppUrl: urls.phoneAppUrl,
     phoneAppDefaultUrl: DEFAULT_PHONE_APP_URL,
     phoneAppMode: PHONE_APP_URL
@@ -142,6 +227,10 @@ app.get("/api/info", async (_req: Request, res: Response) => {
     tls: USE_TLS,
     ts: new Date().toISOString(),
   });
+});
+
+app.get("/api/network", (req: Request, res: Response) => {
+  res.json(networkInfo(selectedNetworkHost(req.query.host)));
 });
 
 app.get("/api/cameras", (_req: Request, res: Response) => {
@@ -292,9 +381,10 @@ app.delete("/api/known-devices/:deviceId", (req: Request, res: Response) => {
   res.json({ ok: removed });
 });
 
-app.get("/api/pair-qr", async (_req: Request, res: Response) => {
+app.get("/api/pair-qr", async (req: Request, res: Response) => {
   try {
-    const png = await qrcode.toBuffer(receiverUrls().phonePairingUrl, {
+    const host = selectedNetworkHost(req.query.host);
+    const png = await qrcode.toBuffer(receiverUrls(host).phonePairingUrl, {
       type: "png",
       margin: 1,
       width: 320,
@@ -358,7 +448,7 @@ app.post("/api/wireguard/generate", async (req: Request, res: Response) => {
       vpnDashboardUrl,
       vpnPairingUrl,
       message:
-        "WireGuard key generation requires the local wg command. Install WireGuard on the receiver, then refresh this wizard.",
+        "WireGuard key generation requires the local wg command. Install WireGuard first, then click Generate again.",
     });
     return;
   }

@@ -5,8 +5,6 @@ const STUN_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ];
-const WIREGUARD_GUIDE_URL =
-  "https://github.com/PhillipAlexanderYoung/knoxnet-browser-cam/blob/main/docs/wireguard-remote-camera.md";
 const DEFAULT_WIREGUARD_RECEIVER_URL = "wss://10.44.0.1:8787/ws";
 
 const el = (id) => document.getElementById(id);
@@ -24,6 +22,10 @@ const state = {
     generated: null,
     phase: "Not configured",
   },
+  network: {
+    data: null,
+    selectedHost: "",
+  },
 };
 
 function setStatus(label, mode) {
@@ -35,6 +37,13 @@ function setStatus(label, mode) {
 async function fetchInfo() {
   const res = await fetch("/api/info", { cache: "no-store" });
   if (!res.ok) throw new Error(`info ${res.status}`);
+  return res.json();
+}
+
+async function fetchNetwork(host) {
+  const qs = host ? `?host=${encodeURIComponent(host)}` : "";
+  const res = await fetch(`/api/network${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`network ${res.status}`);
   return res.json();
 }
 
@@ -67,14 +76,16 @@ function renderInfo(info) {
   if (receiverWsUrl) {
     receiverWsUrl.textContent = info.receiverWsUrl ?? "unknown";
   }
+  if (info.network && !state.network.data) {
+    state.network.data = info.network;
+  }
+  if (state.network.data) {
+    renderNetwork(state.network.data);
+  }
   const wireguardReceiverUrl = recommendedWireGuardReceiverUrl(info);
   for (const id of ["wireguard-receiver-url", "remote-wireguard-url"]) {
     const node = el(id);
     if (node) node.textContent = wireguardReceiverUrl;
-  }
-  for (const id of ["wireguard-help-link", "wireguard-doc-link"]) {
-    const node = el(id);
-    if (node) node.href = WIREGUARD_GUIDE_URL;
   }
   const dashboardUrl = el("dashboard-url");
   if (dashboardUrl) {
@@ -85,7 +96,9 @@ function renderInfo(info) {
     qrUrl.textContent = phonePairingUrl;
     qrUrl.href = phonePairingUrl;
   }
-  el("pairing-qr").src = `/api/pair-qr?ts=${Date.now()}`;
+  if (!state.network.data) {
+    el("pairing-qr").src = `/api/pair-qr?ts=${Date.now()}`;
+  }
   const bridge = el("bridge-status");
   if (bridge) {
     if (!info.bridgeUrl) {
@@ -109,6 +122,51 @@ function renderInfo(info) {
       ? `Remote mode ready: QR opens ${appHost}; receiver target is ${receiverHost}. Remote phones must connect WireGuard first.`
       : `Development mode: QR opens ${appHost}; receiver target is ${receiverHost}.`;
   }
+}
+
+function renderNetwork(network) {
+  state.network.data = network;
+  state.network.selectedHost = network.selectedHost ?? "";
+  const localDashboard = el("local-dashboard-url");
+  const localReceiver = el("local-receiver-ws-url");
+  const receiverWs = el("receiver-ws-url");
+  const dashboardUrl = el("dashboard-url");
+  const pairingUrl = el("pairing-url");
+  const qrUrl = el("pairing-qr-url");
+  if (localDashboard) localDashboard.textContent = network.localDashboardUrl ?? "unknown";
+  if (localReceiver) localReceiver.textContent = network.localReceiverWsUrl ?? "unknown";
+  if (receiverWs) receiverWs.textContent = network.localReceiverWsUrl ?? receiverWs.textContent;
+  if (dashboardUrl) dashboardUrl.textContent = network.localDashboardUrl ?? dashboardUrl.textContent;
+  if (pairingUrl) pairingUrl.textContent = network.localPhonePairingUrl ?? pairingUrl.textContent;
+  if (qrUrl) {
+    qrUrl.textContent = network.localPhonePairingUrl ?? qrUrl.textContent;
+    qrUrl.href = network.localPhonePairingUrl ?? "#";
+  }
+  const qrEndpoint = network.currentQrUrl || "/api/pair-qr";
+  el("pairing-qr").src = `${qrEndpoint}${qrEndpoint.includes("?") ? "&" : "?"}ts=${Date.now()}`;
+
+  const root = el("network-addresses");
+  if (!root) return;
+  const addresses = network.addresses ?? [];
+  if (addresses.length === 0) {
+    root.innerHTML = `<div class="empty empty--compact">No LAN IPv4 address detected. Check receiver network settings.</div>`;
+    return;
+  }
+  root.innerHTML = addresses
+    .map((addr) => {
+      const selected = addr.address === network.selectedHost;
+      const recommended = addr.address === network.recommendedAddress?.address;
+      const bits = [
+        escapeHtml(addr.name),
+        escapeHtml(addr.address),
+        recommended ? "recommended" : "",
+        addr.virtual ? "virtual/VPN" : "",
+      ].filter(Boolean);
+      return `<button class="network-address ${selected ? "network-address--selected" : ""}" data-network-host="${escapeHtml(addr.address)}">
+        <span>${bits.join(" • ")}</span>
+      </button>`;
+    })
+    .join("");
 }
 
 function recommendedWireGuardReceiverUrl(info) {
@@ -146,6 +204,7 @@ function applyWireGuardDefaults(defaults) {
     "wg-receiver-ip": defaults.receiverVpnIp,
     "wg-phone-ip": defaults.phoneVpnIp,
     "wg-port": defaults.listenPort,
+    "wg-interface": defaults.interfaceName,
   };
   for (const [id, value] of Object.entries(values)) {
     const node = el(id);
@@ -159,6 +218,7 @@ function readWireGuardSettings() {
     receiverVpnIp: el("wg-receiver-ip")?.value?.trim() || "10.44.0.1",
     phoneVpnIp: el("wg-phone-ip")?.value?.trim() || "10.44.0.10",
     listenPort: Number(el("wg-port")?.value || 51820),
+    interfaceName: el("wg-interface")?.value?.trim() || "wg-knoxcam",
     publicEndpoint: el("wg-endpoint")?.value?.trim() || "",
     receiverPort: state.info?.httpPort || 8787,
   };
@@ -175,16 +235,16 @@ function updateWireGuardControls() {
   const ack = Boolean(el("wg-ack")?.checked);
   const generate = el("wg-generate");
   const statusNode = el("wg-tool-status");
-  if (generate) generate.disabled = !ack || !status?.wgInstalled;
+  if (generate) generate.disabled = !ack;
   if (!statusNode) return;
   if (!status) {
     statusNode.textContent = "Checking for WireGuard tools…";
     statusNode.className = "wg-status";
   } else if (status.wgInstalled) {
-    statusNode.textContent = `WireGuard tools found${status.version ? `: ${status.version}` : ""}. Config generation is available after acknowledgement.`;
+    statusNode.textContent = `WireGuard tools found${status.version ? `: ${status.version}` : ""}. Check the acknowledgement, then generate.`;
     statusNode.className = "wg-status";
   } else {
-    statusNode.textContent = `WireGuard tools not found. Install them on the receiver, then refresh: ${status.installCommands}`;
+    statusNode.textContent = `WireGuard tools not found. Install WireGuard first, then click Generate again: ${status.installCommands}`;
     statusNode.className = "wg-status wg-status--warn";
   }
 }
@@ -221,7 +281,7 @@ async function generateWireGuardSetup() {
     }
   } finally {
     if (button) {
-      button.textContent = "Generate configs";
+      button.textContent = "Enable remote phone access with WireGuard";
       updateWireGuardControls();
     }
   }
@@ -271,14 +331,6 @@ el("copy-url").addEventListener("click", async () => {
 
 el("wg-ack")?.addEventListener("change", updateWireGuardControls);
 el("wg-generate")?.addEventListener("click", generateWireGuardSetup);
-el("wg-show-pairing")?.addEventListener("click", () => {
-  el("wg-vpn-pairing")?.classList.remove("hidden");
-  setWireGuardPhase("Waiting for VPN");
-});
-el("wg-mark-ready")?.addEventListener("click", () => {
-  el("wg-vpn-pairing")?.classList.remove("hidden");
-  setWireGuardPhase("Ready");
-});
 
 function statusForCamera(cam) {
   return cam.status;
@@ -522,6 +574,16 @@ function safeHost(rawUrl) {
 document.addEventListener("click", async (e) => {
   const t = e.target;
   if (!(t instanceof HTMLElement)) return;
+  const networkHost = t.closest("[data-network-host]")?.getAttribute("data-network-host");
+  if (networkHost) {
+    try {
+      state.network.data = await fetchNetwork(networkHost);
+      renderNetwork(state.network.data);
+    } catch (err) {
+      console.warn("network select", err);
+    }
+    return;
+  }
   const copyTarget = t.getAttribute("data-copy-target");
   if (copyTarget) {
     await copyElementText(copyTarget, t);

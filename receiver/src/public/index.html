@@ -23,16 +23,28 @@
 
       <section class="grid">
         <div class="card pairing-card">
-          <div class="card__title">PAIRING</div>
+          <div class="card__title">LOCAL PHONE PAIRING</div>
+          <p class="plain-model">
+            Works when this phone can reach the receiver: same Wi-Fi/LAN, or connected to the same WireGuard VPN.
+            Cloudflare hosts the app shell only; camera video stays direct/private to this receiver or bridge.
+          </p>
           <div class="pairing">
             <div class="pairing__code-block">
               <div class="caps muted">Pairing code</div>
               <div class="pairing__code" id="pairing-code">––––––</div>
+              <div class="caps muted">Use this on phone while on same Wi-Fi</div>
+              <div class="pairing__url pairing__url--dashboard" id="local-dashboard-url">…</div>
+              <div class="caps muted">Receiver signaling</div>
+              <div class="pairing__url" id="local-receiver-ws-url">…</div>
+              <div class="network-picker" id="network-picker">
+                <div class="caps muted">Receiver address</div>
+                <div id="network-addresses" class="network-addresses">Detecting network addresses…</div>
+              </div>
               <div class="caps muted">Phone pairing URL</div>
               <div class="pairing__url" id="pairing-url">…</div>
               <div class="caps muted">Phone app origin</div>
               <div class="pairing__url" id="phone-app-url">…</div>
-              <div class="caps muted">Embedded receiver WSS URL</div>
+              <div class="caps muted">Embedded receiver signaling URL</div>
               <div class="pairing__url" id="receiver-ws-url">…</div>
               <div class="caps muted">Receiver dashboard URL</div>
               <div class="pairing__url pairing__url--dashboard" id="dashboard-url">…</div>
@@ -51,10 +63,9 @@
               <div class="wireguard-help">
                 <div class="wireguard-help__title">Remote phone? Connect WireGuard first</div>
                 <p>
-                  Turn on the iPhone WireGuard tunnel, then scan this QR or use
+                  Scan the WireGuard QR below first, turn the VPN on, then scan this QR or use
                   <code id="wireguard-receiver-url">wss://10.44.0.1:8787/ws</code>.
                 </p>
-                <a id="wireguard-help-link" href="https://github.com/PhillipAlexanderYoung/knoxnet-browser-cam/blob/main/docs/wireguard-remote-camera.md" target="_blank" rel="noreferrer">View setup guide</a>
               </div>
             </div>
           </div>
@@ -87,73 +98,70 @@
             </p>
           </div>
           <div class="remote-links">
-            <a href="https://github.com/PhillipAlexanderYoung/knoxnet-browser-cam/blob/main/docs/wireguard-remote-camera.md" id="wireguard-doc-link" target="_blank" rel="noreferrer">WireGuard setup guide</a>
-            <span>Recommended remote camera mode: iPhone joins the private VPN, then scans this receiver QR.</span>
+            <span>Recommended remote camera mode: iPhone joins the private VPN, then scans the Knoxnet camera QR.</span>
             <span>Suggested receiver URL over VPN: <code id="remote-wireguard-url">wss://10.44.0.1:8787/ws</code></span>
           </div>
         </div>
         <div class="wg-wizard" id="wg-wizard">
           <div class="wg-wizard__header">
             <div>
-              <div class="wg-wizard__title">Remote Camera Setup (WireGuard)</div>
+              <div class="wg-wizard__title">Enable remote phone access with WireGuard</div>
               <p>
-                This guided setup generates configs and commands. It does not run privileged
-                install, firewall, or service commands for you.
+                Press once to generate receiver config, copy-paste install/start commands,
+                a WireGuard phone QR, and the Knoxnet camera QR. Nothing privileged runs from this web UI.
               </p>
             </div>
-            <button class="btn btn--primary" id="wg-generate" disabled>Generate configs</button>
+            <button class="btn btn--primary" id="wg-generate" disabled>Enable remote phone access with WireGuard</button>
           </div>
 
           <div class="wg-step">
-            <div class="wg-step__label">Step 1 · Understand the risk</div>
+            <div class="wg-step__label">Safety</div>
             <p>
-              WireGuard creates a private VPN so your iPhone can reach this receiver at a
-              VPN address from outside the LAN. Anyone with the peer config can join until
-              you remove or rotate that key, so share configs only with trusted phones.
+              WireGuard gives VPN access to private services. Only add devices you control,
+              keep QR/private keys secret, and do not expose RTSP directly to the internet.
             </p>
             <label class="toggle-row wg-ack">
               <input type="checkbox" id="wg-ack" />
-              <span>I understand the security risks and will review commands before running them.</span>
+              <span>I understand and will review commands before running them.</span>
             </label>
           </div>
 
           <div class="wg-step">
-            <div class="wg-step__label">Step 2 · VPN settings</div>
-            <div class="wg-form">
-              <label>VPN subnet <input id="wg-subnet" value="10.44.0.0/24" /></label>
-              <label>Receiver VPN IP <input id="wg-receiver-ip" value="10.44.0.1" /></label>
-              <label>Phone VPN IP <input id="wg-phone-ip" value="10.44.0.10" /></label>
-              <label>UDP listen port <input id="wg-port" type="number" min="1" max="65535" value="51820" /></label>
-              <label class="wg-form__wide">
-                Public endpoint
-                <input id="wg-endpoint" placeholder="vpn.example.com or 203.0.113.10" />
-                <small>Use the public IP/DDNS that your iPhone can reach. Forward UDP 51820 to this receiver.</small>
-              </label>
-            </div>
+            <div class="wg-step__label">Defaults</div>
+            <p>
+              Uses subnet <code>10.44.0.0/24</code>, receiver <code>10.44.0.1</code>,
+              phone <code>10.44.0.10</code>, UDP <code>51820</code>, interface
+              <code>wg-knoxcam</code>. Add your public IP/DDNS only if using from outside home.
+            </p>
+            <details class="wg-advanced">
+              <summary>Advanced settings</summary>
+              <div class="wg-form">
+                <label>VPN subnet <input id="wg-subnet" value="10.44.0.0/24" /></label>
+                <label>Receiver VPN IP <input id="wg-receiver-ip" value="10.44.0.1" /></label>
+                <label>Phone VPN IP <input id="wg-phone-ip" value="10.44.0.10" /></label>
+                <label>UDP listen port <input id="wg-port" type="number" min="1" max="65535" value="51820" /></label>
+                <label>Interface <input id="wg-interface" value="wg-knoxcam" /></label>
+                <label class="wg-form__wide">
+                  Public endpoint
+                  <input id="wg-endpoint" placeholder="vpn.example.com or 203.0.113.10" />
+                  <small>Use the public IP/DDNS that your iPhone can reach. Forward UDP 51820 to this receiver. Leave blank for LAN-only/testing config.</small>
+                </label>
+              </div>
+            </details>
             <div class="wg-status" id="wg-tool-status">Checking for WireGuard tools…</div>
           </div>
 
-          <div class="wg-step">
-            <div class="wg-step__label">Step 3 · Generate configs</div>
-            <p>
-              The receiver calls the local unprivileged <code>wg genkey</code> and
-              <code>wg pubkey</code> commands. Private keys are returned to this browser
-              and are not saved by the receiver service.
-            </p>
-          </div>
-
           <div class="wg-step wg-generated hidden" id="wg-generated">
-            <div class="wg-step__label">Step 4 · Run receiver commands</div>
+            <div class="wg-step__label">1 · Run receiver commands</div>
             <p>Copy these commands to the receiver/VMS host after reviewing them.</p>
             <div class="code-panel">
               <button class="btn btn--ghost btn--small" data-copy-target="wg-commands">Copy commands</button>
               <pre id="wg-commands"></pre>
             </div>
 
-            <div class="wg-step__label">Step 5 · Import the iPhone WireGuard peer</div>
+            <div class="wg-step__label">2 · Scan this QR in the WireGuard app</div>
             <p>
-              Scan this QR inside the official WireGuard app. This is not the Knoxnet
-              camera pairing QR.
+              Install/open WireGuard on the phone, scan this QR, then turn the VPN on.
             </p>
             <div class="wg-output-grid">
               <img alt="WireGuard peer QR" id="wg-peer-qr" />
@@ -163,16 +171,14 @@
               </div>
             </div>
 
-            <div class="wg-step__label">Step 6 · Verify and pair Knoxnet</div>
+            <div class="wg-step__label">3 · After VPN is on, scan this Knoxnet camera QR</div>
             <ol class="wg-checklist">
               <li>Turn on WireGuard on the iPhone.</li>
               <li>Open <code id="wg-dashboard-url">https://10.44.0.1:8787/</code> in Safari and trust the receiver cert if prompted.</li>
               <li>Scan the Knoxnet camera pairing QR below with the iPhone Camera app.</li>
               <li>Confirm the receiver URL is <code id="wg-vpn-ws">wss://10.44.0.1:8787/ws</code>.</li>
             </ol>
-            <button class="btn btn--primary" id="wg-show-pairing">After VPN is on, generate VPN pairing QR</button>
-            <button class="btn btn--ghost" id="wg-mark-ready">Mark VPN ready</button>
-            <div class="wg-output-grid hidden" id="wg-vpn-pairing">
+            <div class="wg-output-grid" id="wg-vpn-pairing">
               <img alt="Knoxnet VPN pairing QR" id="wg-pairing-qr" />
               <div>
                 <div class="caps muted">Knoxnet camera pairing URL</div>

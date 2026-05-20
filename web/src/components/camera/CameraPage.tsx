@@ -4,6 +4,7 @@ import {
   Flashlight,
   Mic,
   MicOff,
+  ShieldCheck,
   Video,
   Square,
 } from "lucide-react";
@@ -426,6 +427,19 @@ export function CameraPage({
           </div>
         </section>
       )}
+
+      <section className="camera-callout camera-callout--compact camera-callout--hint">
+        <div className="camera-callout__title">
+          <ShieldCheck size={16} />
+          Private receiver connection
+        </div>
+        <div className="camera-callout__body">
+          <p>
+            Works when this phone can reach the receiver: same Wi-Fi/LAN, or connected to the same WireGuard VPN.
+            Cloudflare hosts the app shell only; camera video stays direct/private to the receiver/bridge.
+          </p>
+        </div>
+      </section>
 
       {cameraPermissionBlocked && !cameraAccessError && (
         <section

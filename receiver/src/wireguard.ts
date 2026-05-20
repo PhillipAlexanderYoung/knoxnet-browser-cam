@@ -5,6 +5,7 @@ export interface WireGuardSettings {
   receiverVpnIp: string;
   phoneVpnIp: string;
   listenPort: number;
+  interfaceName: string;
   publicEndpoint: string;
   receiverPort: number;
 }
@@ -28,6 +29,7 @@ export const DEFAULT_WIREGUARD_SETTINGS: WireGuardSettings = {
   receiverVpnIp: "10.44.0.1",
   phoneVpnIp: "10.44.0.10",
   listenPort: 51820,
+  interfaceName: "wg-knoxcam",
   publicEndpoint: "",
   receiverPort: 8787,
 };
@@ -64,6 +66,7 @@ export function normalizeWireGuardSettings(input: unknown): WireGuardSettings {
     receiverVpnIp: stringValue(raw.receiverVpnIp, DEFAULT_WIREGUARD_SETTINGS.receiverVpnIp),
     phoneVpnIp: stringValue(raw.phoneVpnIp, DEFAULT_WIREGUARD_SETTINGS.phoneVpnIp),
     listenPort,
+    interfaceName: interfaceNameValue(raw.interfaceName, DEFAULT_WIREGUARD_SETTINGS.interfaceName),
     publicEndpoint: stringValue(raw.publicEndpoint, DEFAULT_WIREGUARD_SETTINGS.publicEndpoint),
     receiverPort,
   };
@@ -127,22 +130,23 @@ function buildPhoneConfig(
 }
 
 function buildSetupCommands(settings: WireGuardSettings, serverConfig: string): string {
+  const configPath = `/etc/wireguard/${settings.interfaceName}.conf`;
   return [
     "# Review these commands before running them on the receiver/VMS host.",
-    "# They install WireGuard, write /etc/wireguard/wg0.conf, open only the VPN",
-    "# and receiver service ports, then start wg-quick@wg0.",
+    `# They install WireGuard, write ${configPath}, open only the VPN`,
+    `# and receiver service ports, then start wg-quick@${settings.interfaceName}.`,
     "sudo apt update",
     "sudo apt install -y wireguard ufw",
     "sudo install -m 700 -d /etc/wireguard",
-    "sudo tee /etc/wireguard/wg0.conf >/dev/null <<'EOF'",
+    `sudo tee ${configPath} >/dev/null <<'EOF'`,
     serverConfig.trimEnd(),
     "EOF",
-    "sudo chmod 600 /etc/wireguard/wg0.conf",
+    `sudo chmod 600 ${configPath}`,
     `sudo ufw allow ${settings.listenPort}/udp comment 'WireGuard'`,
-    `sudo ufw allow in on wg0 to ${settings.receiverVpnIp} port ${settings.receiverPort} proto tcp comment 'Knoxnet receiver dashboard/WSS'`,
-    `sudo ufw allow in on wg0 to ${settings.receiverVpnIp} port 8790 proto tcp comment 'Knoxnet bridge API'`,
-    `sudo ufw allow in on wg0 to ${settings.receiverVpnIp} port 8554 proto tcp comment 'MediaMTX RTSP over VPN'`,
-    "sudo systemctl enable --now wg-quick@wg0",
+    `sudo ufw allow in on ${settings.interfaceName} to ${settings.receiverVpnIp} port ${settings.receiverPort} proto tcp comment 'Knoxnet receiver dashboard/WSS'`,
+    `sudo ufw allow in on ${settings.interfaceName} to ${settings.receiverVpnIp} port 8790 proto tcp comment 'Knoxnet bridge API'`,
+    `sudo ufw allow in on ${settings.interfaceName} to ${settings.receiverVpnIp} port 8554 proto tcp comment 'MediaMTX RTSP over VPN'`,
+    `sudo systemctl enable --now wg-quick@${settings.interfaceName}`,
     "sudo wg show",
   ].join("\n");
 }
@@ -169,6 +173,11 @@ function subnetPrefix(vpnSubnet: string): number {
 
 function stringValue(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function interfaceNameValue(value: unknown, fallback: string): string {
+  const raw = typeof value === "string" && value.trim() ? value.trim() : fallback;
+  return /^[a-zA-Z0-9_.-]{1,15}$/.test(raw) ? raw : fallback;
 }
 
 function numberInRange(value: unknown, min: number, max: number): number | undefined {

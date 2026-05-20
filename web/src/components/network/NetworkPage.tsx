@@ -28,7 +28,6 @@ import {
   DEFAULT_WIREGUARD_RECEIVER_URL,
   WIREGUARD_APP_STORE_URL,
   WIREGUARD_DEEP_LINK,
-  WIREGUARD_GUIDE_URL,
 } from "../../wireguard";
 import "./NetworkPage.css";
 
@@ -82,22 +81,14 @@ export function NetworkPage({
     | "fps"
     | "bitrate"
     | "receiver"
-    | "vpnReceiver"
     | "pair"
   >(null);
   const [draftName, setDraftName] = useState(settings.cameraName);
   const [draftReceiver, setDraftReceiver] = useState(settings.receiverUrl);
-  const [draftVpnReceiver, setDraftVpnReceiver] = useState(
-    settings.vpnReceiverUrl ?? DEFAULT_WIREGUARD_RECEIVER_URL,
-  );
   const [draftPair, setDraftPair] = useState(settings.pairingCode);
 
   useEffect(() => setDraftName(settings.cameraName), [settings.cameraName]);
   useEffect(() => setDraftReceiver(settings.receiverUrl), [settings.receiverUrl]);
-  useEffect(
-    () => setDraftVpnReceiver(settings.vpnReceiverUrl ?? DEFAULT_WIREGUARD_RECEIVER_URL),
-    [settings.vpnReceiverUrl],
-  );
   useEffect(() => setDraftPair(settings.pairingCode), [settings.pairingCode]);
 
   const resolutionLabel = useMemo(
@@ -139,6 +130,14 @@ export function NetworkPage({
         </button>
         <span className="network-page__title">Network Settings</span>
         <span className="iconbtn iconbtn--ghost" aria-hidden="true" />
+      </div>
+
+      <div className="callout callout--info connectivity-model">
+        <InfoIcon size={14} />
+        <span>
+          Works when this phone can reach the receiver: same Wi-Fi/LAN, or connected to the same WireGuard VPN.
+          Cloudflare hosts the app shell only; camera video stays direct/private to the receiver/bridge.
+        </span>
       </div>
 
       <div className="card">
@@ -183,7 +182,9 @@ export function NetworkPage({
         >
           <div className="row__label">
             Receiver URL
-            <span className="row__sublabel">WebSocket signaling endpoint</span>
+            <span className="row__sublabel">
+              Optional manual override for troubleshooting; the receiver QR fills this automatically.
+            </span>
           </div>
           <div className="row__value">
             <span className="ellipsize">
@@ -228,17 +229,18 @@ export function NetworkPage({
             <div className="wireguard-card__title">Remote phone? Connect WireGuard first.</div>
             <p>
               Cloudflare hosts only the app shell at <code>cam.knoxnetvms.com</code>.
-              For remote camera use, connect this iPhone to the receiver/VMS
-              network with WireGuard before pairing.
+              Camera video stays direct/private to the receiver/bridge. For remote use,
+              connect this iPhone to the same WireGuard VPN before pairing.
             </p>
           </div>
         </div>
 
         <ol className="wireguard-steps">
           <li>Install the WireGuard app.</li>
-          <li>Import the peer config or QR generated on the receiver machine.</li>
+          <li>On the receiver dashboard, press <strong>Enable remote phone access with WireGuard</strong>.</li>
+          <li>Scan the receiver's WireGuard QR in the WireGuard app.</li>
           <li>Turn on the VPN tunnel.</li>
-          <li>Return here and use receiver URL <code>{vpnReceiverUrl}</code>, or scan the receiver QR.</li>
+          <li>Scan the receiver's Knoxnet camera QR. It will use <code>{vpnReceiverUrl}</code>.</li>
         </ol>
 
         <div className="wireguard-actions">
@@ -249,29 +251,7 @@ export function NetworkPage({
           <a className="btn btn--ghost" href={WIREGUARD_DEEP_LINK}>
             Open WireGuard
           </a>
-          <a className="btn btn--ghost" href={WIREGUARD_GUIDE_URL} target="_blank" rel="noreferrer">
-            View setup guide
-            <ExternalLink size={14} />
-          </a>
         </div>
-
-        <div className="row wireguard-row" role="button" tabIndex={0} onClick={() => setShowSheet("vpnReceiver")}>
-          <div className="row__label">
-            VPN Receiver URL
-            <span className="row__sublabel">Use after the WireGuard tunnel is on</span>
-          </div>
-          <div className="row__value">
-            <span className="ellipsize">{vpnReceiverUrl}</span>
-            <ChevronRight size={16} className="chev" />
-          </div>
-        </div>
-        <button
-          type="button"
-          className="btn btn--ghost wireguard-card__use"
-          onClick={() => onChange({ ...settings, receiverUrl: vpnReceiverUrl })}
-        >
-          Use VPN URL as Receiver URL
-        </button>
 
         <div className="callout wireguard-warning">
           <InfoIcon size={14} />
@@ -447,31 +427,6 @@ export function NetworkPage({
             className="btn btn--primary"
             onClick={() => {
               onChange({ ...settings, receiverUrl: draftReceiver.trim() });
-              setShowSheet(null);
-            }}
-          >
-            Save
-          </button>
-        </div>
-      </BottomSheet>
-
-      <BottomSheet
-        open={showSheet === "vpnReceiver"}
-        title="VPN Receiver URL"
-        onClose={() => setShowSheet(null)}
-      >
-        <input
-          autoFocus
-          value={draftVpnReceiver}
-          onChange={(e) => setDraftVpnReceiver(e.target.value)}
-          placeholder={DEFAULT_WIREGUARD_RECEIVER_URL}
-        />
-        <div className="sheet__actions">
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={() => {
-              onChange({ ...settings, vpnReceiverUrl: draftVpnReceiver.trim() || DEFAULT_WIREGUARD_RECEIVER_URL });
               setShowSheet(null);
             }}
           >

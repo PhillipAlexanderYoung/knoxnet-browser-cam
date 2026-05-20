@@ -120,6 +120,13 @@ body {
   justify-content: space-between;
 }
 
+.plain-model {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: -4px 0 16px;
+}
+
 .pairing { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 18px; align-items: center; }
 .pairing__code {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
@@ -161,6 +168,36 @@ a.pairing__url:hover {
   line-height: 1.45;
   color: var(--text-secondary);
   margin: -2px 0 12px;
+}
+.network-picker {
+  margin: 2px 0 14px;
+}
+.network-addresses {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+.network-address {
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  cursor: pointer;
+}
+.network-address--selected {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(34, 197, 94, 0.08);
+}
+.empty--compact {
+  padding: 8px 0;
+  text-align: left;
+  font-size: 11px;
 }
 .bridge-status {
   font-size: 11px;
@@ -277,8 +314,18 @@ a.pairing__url:hover {
 }
 .wg-form {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
   gap: 10px;
+}
+.wg-advanced {
+  margin-top: 10px;
+}
+.wg-advanced summary {
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 10px;
 }
 .wg-form label {
   display: grid;

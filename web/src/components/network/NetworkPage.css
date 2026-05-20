@@ -82,6 +82,16 @@
   line-height: 1.45;
 }
 
+.callout--info {
+  background: rgba(34, 197, 94, 0.06);
+  border-color: rgba(34, 197, 94, 0.3);
+  color: #b9f0ce;
+}
+
+.connectivity-model {
+  margin-top: -6px;
+}
+
 .wireguard-card {
   display: grid;
   gap: 12px;

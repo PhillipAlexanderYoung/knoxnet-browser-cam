@@ -4,7 +4,6 @@ import {
   DEFAULT_WIREGUARD_RECEIVER_URL,
   WIREGUARD_APP_STORE_URL,
   WIREGUARD_DEEP_LINK,
-  WIREGUARD_GUIDE_URL,
 } from "../../wireguard";
 import "./InfoPage.css";
 
@@ -86,19 +85,19 @@ export function InfoPage() {
         <div className="info-wireguard__header">
           <ShieldCheck size={18} />
           <div>
-            <div className="info-wireguard__title">Connect the VPN before remote camera use</div>
+            <div className="info-wireguard__title">Local or private VPN only</div>
             <p>
-              <code>cam.knoxnetvms.com</code> serves the static phone app only.
-              The camera stream still needs a private path back to the receiver,
-              so remote iPhones should join WireGuard first.
+              Works when this phone can reach the receiver: same Wi-Fi/LAN, or connected to the same WireGuard VPN.
+              <code>cam.knoxnetvms.com</code> serves the static phone app only;
+              camera video stays direct/private to the receiver/bridge.
             </p>
           </div>
         </div>
         <ol className="info-wireguard__steps">
           <li>Install WireGuard for iPhone.</li>
-          <li>Import the peer config or QR from the receiver machine.</li>
+          <li>On the receiver dashboard, generate and scan the WireGuard QR.</li>
           <li>Turn on the VPN tunnel.</li>
-          <li>Return here and use <code>{DEFAULT_WIREGUARD_RECEIVER_URL}</code>, or scan the receiver QR.</li>
+          <li>Scan the receiver's Knoxnet camera QR. It will use <code>{DEFAULT_WIREGUARD_RECEIVER_URL}</code>.</li>
         </ol>
         <div className="info-wireguard__actions">
           <a className="btn btn--primary" href={WIREGUARD_APP_STORE_URL} target="_blank" rel="noreferrer">
@@ -107,10 +106,6 @@ export function InfoPage() {
           </a>
           <a className="btn btn--ghost" href={WIREGUARD_DEEP_LINK}>
             Open WireGuard
-          </a>
-          <a className="btn btn--ghost" href={WIREGUARD_GUIDE_URL} target="_blank" rel="noreferrer">
-            View setup guide
-            <ExternalLink size={14} />
           </a>
         </div>
         <div className="callout callout--warning">
@@ -153,8 +148,8 @@ export function InfoPage() {
         <InfoIcon size={14} />
         <span>
           Frontend reads <code>?receiver</code> and <code>?pair</code> URL params
-          on load. Video traffic stays on your LAN even when the static
-          frontend is served from a public URL.
+          on load. Video traffic stays on your LAN or WireGuard VPN even when
+          the static frontend is served from a public URL.
         </span>
       </div>
     </div>
