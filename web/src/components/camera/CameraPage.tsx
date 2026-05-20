@@ -4,10 +4,13 @@ import {
   Flashlight,
   Mic,
   MicOff,
+  QrCode,
   ShieldCheck,
   Video,
   Square,
 } from "lucide-react";
+import { DirectViewScanner } from "../../direct-view/DirectViewScanner";
+import type { DirectViewQrResult } from "../../direct-view/qr";
 import {
   CAMERA_PERMISSION_REQUIRED_MESSAGE,
   isCameraPermissionDeniedError,
@@ -30,6 +33,7 @@ interface CameraPageProps {
   clientDeviceId: string;
   onDirectCamera: () => void;
   onDirectViewer: () => void;
+  onQrResult: (result: DirectViewQrResult) => void;
 }
 
 function formatTrackBadge(settings: MediaTrackSettings | null): string | null {
@@ -124,12 +128,14 @@ export function CameraPage({
   clientDeviceId,
   onDirectCamera,
   onDirectViewer,
+  onQrResult,
 }: CameraPageProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [cameraPermissionBlocked, setCameraPermissionBlocked] = useState(false);
   const [retryingCamera, setRetryingCamera] = useState(false);
   const [previewActive, setPreviewActive] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
   const cameraAccessError = api.cameraAccessError;
 
   useEffect(() => {
@@ -216,6 +222,20 @@ export function CameraPage({
     }
     await startStreaming();
   }, [api, startStreaming]);
+
+  const openScanner = useCallback(async () => {
+    setPermissionError(null);
+    if (api.stream || api.shouldStream) {
+      await api.stop();
+      setPreviewActive(false);
+    }
+    setScannerOpen(true);
+  }, [api]);
+
+  const handleQrResult = useCallback((result: DirectViewQrResult) => {
+    setScannerOpen(false);
+    onQrResult(result);
+  }, [onQrResult]);
 
   const isStreaming = api.state === "streaming";
   const isBusy =
@@ -466,32 +486,38 @@ export function CameraPage({
       )}
 
       <div className={`videoframe ${isStreaming ? "videoframe--live" : ""}`}>
-        <video
-          ref={videoRef}
-          className="videoframe__video"
-          autoPlay
-          playsInline
-          muted
-        />
-        {!previewActive && !permissionError && !cameraAccessError && (
-          <div className="videoframe__placeholder">
-            <Video size={32} strokeWidth={1.5} />
-            <span>Tap Connect to start camera</span>
-          </div>
-        )}
-        {(permissionError || cameraAccessError) && (
-          <div className="videoframe__placeholder videoframe__placeholder--error">
-            <AlertTriangle size={26} strokeWidth={1.75} />
-            <span>{permissionError ?? cameraAccessError}</span>
-          </div>
-        )}
-        {badge && (
-          <span className="videoframe__badge">{badge}</span>
-        )}
-        {isStreaming && (
-          <span className="videoframe__signal">
-            <SignalBars strength={signalStrength} />
-          </span>
+        {scannerOpen ? (
+          <DirectViewScanner onResult={handleQrResult} onStop={() => setScannerOpen(false)} />
+        ) : (
+          <>
+            <video
+              ref={videoRef}
+              className="videoframe__video"
+              autoPlay
+              playsInline
+              muted
+            />
+            {!previewActive && !permissionError && !cameraAccessError && (
+              <div className="videoframe__placeholder">
+                <Video size={32} strokeWidth={1.5} />
+                <span>Tap Connect to start camera</span>
+              </div>
+            )}
+            {(permissionError || cameraAccessError) && (
+              <div className="videoframe__placeholder videoframe__placeholder--error">
+                <AlertTriangle size={26} strokeWidth={1.75} />
+                <span>{permissionError ?? cameraAccessError}</span>
+              </div>
+            )}
+            {badge && (
+              <span className="videoframe__badge">{badge}</span>
+            )}
+            {isStreaming && (
+              <span className="videoframe__signal">
+                <SignalBars strength={signalStrength} />
+              </span>
+            )}
+          </>
         )}
       </div>
 
@@ -512,22 +538,30 @@ export function CameraPage({
         <div className="mode-picker__summary">
           <div className="mode-picker__title">
             <ShieldCheck size={14} />
-            Mode
+            Local VMS Camera
           </div>
           <p>
-            Receiver mode keeps video direct/private on LAN or WireGuard.
-            {autoStart ? " QR receiver detected; tap Connect to start." : ""}
+            Connect to a local receiver/bridge for Knoxnet or RTSP. Run the receiver, open its dashboard, then scan its QR here or with your Camera app.
+            {autoStart ? " Receiver QR loaded; tap Connect to start." : ""}
           </p>
         </div>
+        <button
+          type="button"
+          className="mode-picker__scan"
+          onClick={() => void openScanner()}
+          disabled={Boolean(cameraAccessError)}
+        >
+          <QrCode size={14} /> Scan receiver or Direct View QR
+        </button>
         <div className="mode-picker__actions" role="group" aria-label="Mode options">
           <button type="button" className="mode-picker__button mode-picker__button--active">
-            Receiver
+            Local VMS
           </button>
           <button type="button" className="mode-picker__button" onClick={onDirectCamera}>
-            Share
+            Direct Share
           </button>
           <button type="button" className="mode-picker__button" onClick={onDirectViewer}>
-            View
+            Direct View
           </button>
         </div>
       </section>

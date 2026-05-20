@@ -5,6 +5,7 @@ export interface BridgeAllocation {
   name: string;
   path: string;
   rtspUrl: string;
+  rtspUrlRedacted?: string;
   whipUrl?: string;
   ingestStatus?: "allocated" | "publishing" | "recovering" | "offline" | "error";
   lastError?: string;
@@ -25,7 +26,7 @@ export interface BridgeClient {
   ) => Promise<BridgePublishResult>;
   markCameraOffline: (camera: CameraRecord, reason?: string) => Promise<void>;
   removeCamera: (camera: CameraRecord | string, permanent?: boolean) => Promise<void>;
-  health: () => Promise<{ ok: boolean; mediamtx?: unknown; error?: string }>;
+  health: () => Promise<{ ok: boolean; mediamtx?: unknown; rtspAuth?: unknown; error?: string }>;
 }
 
 export function createBridgeClient(
@@ -130,13 +131,14 @@ export function createBridgeClient(
     },
 
     async health() {
-      const result = await requestJson<{ ok: boolean; mediamtx?: unknown }>(
+      const result = await requestJson<{ ok: boolean; mediamtx?: unknown; rtspAuth?: unknown }>(
         "/api/health",
         { method: "GET" },
       );
       return {
         ok: result.ok && Boolean(result.body?.ok),
         mediamtx: result.body?.mediamtx,
+        rtspAuth: result.body?.rtspAuth,
         error: result.error,
       };
     },

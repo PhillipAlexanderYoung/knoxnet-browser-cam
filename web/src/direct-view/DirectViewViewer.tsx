@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ShieldCheck, Video, Volume2, VolumeX } from "lucide-react";
+import { QrCode, ShieldCheck, Video, Volume2, VolumeX } from "lucide-react";
 import { Header } from "../components/Header";
+import { DirectViewScanner } from "./DirectViewScanner";
+import { parseDirectViewInvite, type DirectViewQrResult } from "./qr";
 import {
   describeThisDevice,
   directReconnectTokenKey,
@@ -29,14 +31,17 @@ type ViewerStatus =
 interface DirectViewViewerProps {
   roomToken?: string;
   onBack?: () => void;
+  onRoomToken?: (roomToken: string) => void;
+  onReceiverInvite?: (invite: Extract<DirectViewQrResult, { type: "receiver" }>) => void;
 }
 
-export function DirectViewViewer({ roomToken, onBack }: DirectViewViewerProps) {
+export function DirectViewViewer({ roomToken, onBack, onRoomToken, onReceiverInvite }: DirectViewViewerProps) {
   const [token, setToken] = useState(roomToken ?? "");
   const [status, setStatus] = useState<ViewerStatus>(roomToken ? "joining" : "idle");
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(true);
   const [needsPlay, setNeedsPlay] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
   const clientRef = useRef<DirectSignalingClient | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
@@ -167,10 +172,40 @@ export function DirectViewViewer({ roomToken, onBack }: DirectViewViewerProps) {
     });
   }, [attachAndPlay, cleanup, token]);
 
+  const openRoomToken = useCallback((nextToken: string) => {
+    setScannerOpen(false);
+    setError(null);
+    setToken(nextToken);
+    if (onRoomToken) {
+      onRoomToken(nextToken);
+      return;
+    }
+    window.history.pushState({}, "", `/join/${encodeURIComponent(nextToken)}`);
+    void join(nextToken);
+  }, [join, onRoomToken]);
+
+  const handleQrResult = useCallback((result: DirectViewQrResult) => {
+    if (result.type === "direct-view") {
+      openRoomToken(result.roomToken);
+      return;
+    }
+
+    setScannerOpen(false);
+    if (onReceiverInvite) {
+      onReceiverInvite(result);
+      return;
+    }
+    setError("Receiver QR found. Return to Local VMS Camera mode to use it.");
+  }, [onReceiverInvite, openRoomToken]);
+
   useEffect(() => {
     if (roomToken) void join(roomToken);
     // Initial QR route join only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomToken]);
+
+  useEffect(() => {
+    if (roomToken) setScannerOpen(false);
   }, [roomToken]);
 
   const disconnect = useCallback(() => {
@@ -187,8 +222,17 @@ export function DirectViewViewer({ roomToken, onBack }: DirectViewViewerProps) {
     }
   }, []);
 
+  const submitInvite = useCallback(() => {
+    const nextToken = parseDirectViewInvite(token);
+    if (!nextToken) {
+      setError("Paste a Direct View invite link or room token.");
+      return;
+    }
+    openRoomToken(nextToken);
+  }, [openRoomToken, token]);
+
   const statusText = {
-    idle: "Paste or scan a Direct View link",
+    idle: "Scan or paste a Direct View invite",
     joining: "Joining room",
     "waiting-approval": "Waiting for camera approval",
     connecting: "Connecting peer-to-peer",
@@ -221,11 +265,17 @@ export function DirectViewViewer({ roomToken, onBack }: DirectViewViewerProps) {
       </section>
 
       <div className={`direct-video ${status === "connected" ? "direct-video--live" : ""}`}>
-        <video ref={videoRef} autoPlay playsInline muted={muted} controls={status === "connected"} />
-        {needsPlay && (
-          <button type="button" className="direct-play" onClick={() => void playNow()}>
-            Tap to play live video
-          </button>
+        {scannerOpen ? (
+          <DirectViewScanner onResult={handleQrResult} onStop={() => setScannerOpen(false)} />
+        ) : (
+          <>
+            <video ref={videoRef} autoPlay playsInline muted={muted} controls={status === "connected"} />
+            {needsPlay && (
+              <button type="button" className="direct-play" onClick={() => void playNow()}>
+                Tap to play live video
+              </button>
+            )}
+          </>
         )}
       </div>
 
@@ -237,14 +287,29 @@ export function DirectViewViewer({ roomToken, onBack }: DirectViewViewerProps) {
       {error && <div className="direct-error">{error}</div>}
 
       {!roomToken && (
-        <section className="direct-card direct-controls">
+        <section className="direct-card direct-controls direct-viewer-options">
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() => {
+              setError(null);
+              setScannerOpen(true);
+            }}
+          >
+            <QrCode size={14} /> Scan QR in app
+          </button>
           <label>
-            Room token
-            <input value={token} onChange={(e) => setToken(e.target.value)} placeholder="Paste room token" />
+            Paste/open invite link
+            <input
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="https://cam.knoxnetvms.com/join/..."
+            />
           </label>
-          <button type="button" className="btn btn--primary" onClick={() => void join()}>
+          <button type="button" className="btn" onClick={submitInvite}>
             Join Direct View
           </button>
+          <p className="direct-note">You can also scan the QR with your phone's Camera app.</p>
         </section>
       )}
 

@@ -347,6 +347,26 @@
   line-height: 1.35;
 }
 
+.mode-picker__scan {
+  min-height: 34px;
+  border-radius: var(--r-button);
+  border: 1px solid rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+.mode-picker__scan:disabled {
+  opacity: 0.5;
+}
+
 .mode-picker__actions {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;

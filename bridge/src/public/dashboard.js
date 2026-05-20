@@ -64,6 +64,20 @@ function previewType(cam) {
   return cam.preview?.type === "hls" ? "HLS" : "WebRTC";
 }
 
+function rtspAuthRequired() {
+  return Boolean(state.health?.rtspAuth?.required);
+}
+
+function rtspUsername() {
+  return state.health?.rtspAuth?.username || "knoxnet";
+}
+
+function displayRtspUrl(cam) {
+  return rtspAuthRequired()
+    ? (cam.rtspUrlRedacted || cam.rtspUrl || "-")
+    : (cam.rtspUrl || "-");
+}
+
 function qualityLabel(quality) {
   if (!quality) return "-";
   const current = quality.currentResolution || (quality.height ? `${quality.height}p` : "");
@@ -127,10 +141,14 @@ function statusPill(cam) {
 function actionButtons(cam) {
   const id = escapeAttr(cameraId(cam));
   const url = previewUrl(cam);
+  const authButton = rtspAuthRequired()
+    ? `<button class="btn btn--ghost" type="button" data-action="copy-rtsp-credentials" data-id="${id}">Copy NVR URL with credentials</button>`
+    : "";
   return `
     <div class="actions">
       <button class="btn btn--primary" type="button" data-action="detail" data-id="${id}">Open</button>
-      <button class="btn btn--ghost" type="button" data-action="copy-rtsp" data-id="${id}">${cameraStatus(cam) === "publishing" ? "Copy Stable RTSP URL" : "Copy Stable RTSP URL (not live)"}</button>
+      ${authButton}
+      <button class="btn btn--ghost" type="button" data-action="copy-rtsp" data-id="${id}">Copy URL without credentials</button>
       ${url ? `<button class="btn btn--ghost" type="button" data-action="open-preview" data-id="${id}">Preview URL</button>` : ""}
       <button class="btn btn--danger" type="button" data-action="delete" data-id="${id}">Remove</button>
     </div>
@@ -164,8 +182,8 @@ function renderTable(cameras) {
           <td>${statusPill(cam)}</td>
           <td>
             <div class="mono">Stable RTSP URL / NVR URL</div>
-            <code class="mono rtsp-url">${escapeHtml(cam.rtspUrl || "-")}</code>
-            <div class="mono">Use this in VLC/VMS/NVR; it is retained while the phone reconnects.</div>
+            <code class="mono rtsp-url">${escapeHtml(displayRtspUrl(cam))}</code>
+            <div class="mono">${rtspAuthRequired() ? `Auth required: user ${escapeHtml(rtspUsername())}, password hidden.` : "Auth disabled; use only on a trusted dev LAN."}</div>
           </td>
           <td class="mono">${escapeHtml(formatWhen(cam.lastSeen || cam.updatedAt))}</td>
           <td>
@@ -202,8 +220,8 @@ function renderCards(cameras) {
             </div>
             <div class="camera-card__meta">
               <div class="mono">Stable RTSP URL / NVR URL</div>
-              <code class="mono rtsp-url">${escapeHtml(cam.rtspUrl || "-")}</code>
-              <div class="mono">Retained across phone reconnects.</div>
+              <code class="mono rtsp-url">${escapeHtml(displayRtspUrl(cam))}</code>
+              <div class="mono">${rtspAuthRequired() ? `Auth required: user ${escapeHtml(rtspUsername())}.` : "Auth disabled; trusted dev LAN only."}</div>
               <div class="mono">last seen ${escapeHtml(formatWhen(cam.lastSeen || cam.updatedAt))}</div>
               <div class="mono">bridge ${escapeHtml(cam.ingestStatus || cameraStatus(cam))}</div>
               <div class="mono">quality ${escapeHtml(qualityLabel(cam.quality))}</div>
@@ -221,7 +239,11 @@ function renderSummary() {
   const publishing = cameras.filter((cam) => cameraStatus(cam) === "publishing").length;
   el("metric-cameras").textContent = String(cameras.length);
   el("metric-publishing").textContent = String(publishing);
-  el("metric-rtsp").textContent = state.health?.urls?.rtspBase || "rtsp://<host>:8554";
+  el("metric-rtsp").textContent = state.health?.urls?.rtspBaseRedacted || state.health?.urls?.rtspBase || "rtsp://<host>:8554";
+  el("metric-auth").textContent = rtspAuthRequired()
+    ? `enabled - user ${rtspUsername()}`
+    : "disabled - LAN clients can view without a password";
+  el("auth-warning").classList.toggle("hidden", rtspAuthRequired());
 
   const anyPreview = cameras.some((cam) => cam.previewAvailable);
   const healthPreview = state.health?.urls?.webRtcBase || state.health?.urls?.whipBase;
@@ -300,26 +322,29 @@ function closeDetail() {
 }
 
 function previewInstructions(cam) {
-  const url = cam.rtspUrl || "rtsp://<host>:8554/<camera-path>";
+  const url = displayRtspUrl(cam) || "rtsp://<host>:8554/<camera-path>";
+  const authNote = rtspAuthRequired()
+    ? ` Use username <code>${escapeHtml(rtspUsername())}</code>; copy the credentialed NVR URL from the dashboard when the client cannot prompt separately.`
+    : " RTSP auth is disabled; anyone on this network who can reach the URL may view the stream.";
   const configured = cam.previewAvailable && previewUrl(cam);
   if (cameraStatus(cam) !== "publishing") {
     return `
       <strong>No live preview yet.</strong>
       This path is allocated, but the bridge has not seen a successful MediaMTX publish session.
-      Start or accept the phone camera, then use <code>${escapeHtml(url)}</code> in VLC or Knoxnet VMS.
+      Start or accept the phone camera, then use <code>${escapeHtml(url)}</code> in VLC or Knoxnet VMS.${authNote}
     `;
   }
   if (!configured) {
     return `
       <strong>Browser preview unavailable.</strong>
       Browsers cannot play RTSP directly in a video element. Use VLC or Knoxnet VMS with
-      <code>${escapeHtml(url)}</code>, or enable MediaMTX WebRTC/HLS egress and expose that port to this browser.
+      <code>${escapeHtml(url)}</code>, or enable MediaMTX WebRTC/HLS egress and expose that port to this browser.${authNote}
     `;
   }
   return `
     <strong>Preview could not be embedded.</strong>
     Open the MediaMTX preview URL directly, or use VLC/Knoxnet VMS with
-    <code>${escapeHtml(url)}</code>.
+    <code>${escapeHtml(url)}</code>.${authNote}
   `;
 }
 
@@ -342,14 +367,16 @@ function renderDetail(cam) {
     ${metaRow("Status", cameraStatus(cam))}
     ${metaRow("Bridge ingest", cam.ingestStatus || cameraStatus(cam))}
     ${metaRow("Quality", escapeHtml(qualityLabel(cam.quality)))}
-    ${metaRow("RTSP URL", `<code>${escapeHtml(cam.rtspUrl || "-")}</code>`)}
+    ${metaRow("RTSP auth", rtspAuthRequired() ? `enabled - username <code>${escapeHtml(rtspUsername())}</code>, password hidden` : `<span class="warning-text">disabled - anyone on this network who can reach this URL may view the stream</span>`)}
+    ${metaRow("RTSP URL", `<code>${escapeHtml(displayRtspUrl(cam))}</code>`)}
     ${metaRow("MediaMTX preview", webRtc ? `<code>${escapeHtml(webRtc)}</code>` : "Not configured")}
     ${metaRow("Created", cam.createdAt ? new Date(cam.createdAt).toLocaleString() : "-")}
     ${metaRow("Updated", cam.updatedAt ? new Date(cam.updatedAt).toLocaleString() : "-")}
     ${metaRow("Last seen", cam.lastSeen ? new Date(cam.lastSeen).toLocaleString() : "Never")}
     ${cam.lastError ? metaRow("Last error", escapeHtml(cam.lastError)) : ""}
     <div class="meta-actions">
-      <button class="btn btn--ghost" type="button" data-action="copy-rtsp" data-id="${escapeAttr(id)}">Copy RTSP</button>
+      ${rtspAuthRequired() ? `<button class="btn btn--ghost" type="button" data-action="copy-rtsp-credentials" data-id="${escapeAttr(id)}">Copy NVR URL with credentials</button>` : ""}
+      <button class="btn btn--ghost" type="button" data-action="copy-rtsp" data-id="${escapeAttr(id)}">Copy URL without credentials</button>
       ${webRtc ? `<button class="btn btn--ghost" type="button" data-action="open-preview" data-id="${escapeAttr(id)}">Open Preview URL</button>` : ""}
       <button class="btn btn--danger" type="button" data-action="delete" data-id="${escapeAttr(id)}">Remove</button>
     </div>
@@ -375,6 +402,20 @@ async function deleteCamera(id) {
   await refresh();
 }
 
+async function copyRtspUrl(id, includeCredentials) {
+  const cam = selectedCamera(id);
+  if (!cam?.rtspUrl) return;
+  if (!includeCredentials) {
+    await copyText(cam.rtspUrl, "RTSP URL copied");
+    return;
+  }
+
+  const body = await fetchJson(
+    `/api/cameras/${encodeURIComponent(id)}/rtsp-url?credentials=1`,
+  );
+  if (body?.url) await copyText(body.url, "Credentialed RTSP copied");
+}
+
 document.addEventListener("click", async (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
@@ -391,8 +432,9 @@ document.addEventListener("click", async (event) => {
     } else if (action === "close-detail") {
       closeDetail();
     } else if (action === "copy-rtsp" && id) {
-      const cam = selectedCamera(id);
-      if (cam?.rtspUrl) await copyText(cam.rtspUrl, "RTSP copied");
+      await copyRtspUrl(id, false);
+    } else if (action === "copy-rtsp-credentials" && id) {
+      await copyRtspUrl(id, true);
     } else if (action === "open-preview" && id) {
       const cam = selectedCamera(id);
       const url = cam ? previewUrl(cam) : "";

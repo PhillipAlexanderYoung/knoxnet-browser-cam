@@ -93,7 +93,7 @@ code {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: 120px 120px minmax(260px, 1fr) minmax(260px, 1fr);
+  grid-template-columns: 120px 120px minmax(240px, 1fr) minmax(220px, 0.8fr) minmax(240px, 1fr);
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -149,6 +149,15 @@ code {
   font-size: 12px;
   line-height: 1.45;
 }
+.toolbar__warning {
+  margin: 8px 0 0;
+  max-width: 760px;
+  color: #fca5a5;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+.hidden { display: none !important; }
 .toolbar__actions { display: flex; gap: 8px; }
 
 .btn {
@@ -445,6 +454,7 @@ code {
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
+.warning-text { color: #fca5a5; }
 .meta-actions {
   display: flex;
   flex-wrap: wrap;

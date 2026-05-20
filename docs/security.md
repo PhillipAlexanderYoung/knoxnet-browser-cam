@@ -19,6 +19,13 @@ the local Knoxnet VMS receiver is the only consumer.
 - **No anonymous open streaming.** There is no public listing of streams. The
   receiver only relays SDP/ICE between a matched `camera` and `viewer`
   bound to the same `sessionId`.
+- **Authenticated RTSP egress by default.** The local bridge generates MediaMTX
+  config with `RTSP_AUTH_REQUIRED=true` unless explicitly disabled. Phone
+  browsers publish WebRTC to the receiver/bridge and do not receive RTSP
+  credentials. RTSP/NVR clients use `RTSP_USERNAME` and `RTSP_PASSWORD`; when
+  no password is supplied, the bridge creates a strong random password on first
+  start and stores it in `RTSP_PASSWORD_FILE` (default
+  `<BRIDGE_RUNTIME_DIR>/rtsp-password`) with restrictive permissions.
 - **One-time pairing-code log.** The code is printed once on boot. All
   subsequent receiver logs print a redacted form (`A****Z`).
 - **localStorage scope.** Only harmless preferences are persisted by the
@@ -45,6 +52,9 @@ the local Knoxnet VMS receiver is the only consumer.
   encrypted in transit regardless of the signaling transport.
 - **Replay protection on the pairing code beyond its lifetime.** A pairing
   code lasts as long as the receiver process; restart to rotate.
+- **Internet exposure of RTSP.** RTSP is a LAN/VPN output for VLC, Knoxnet VMS,
+  and NVR clients. Do not port-forward MediaMTX RTSP to the public internet;
+  use WireGuard for remote access.
 - **Browser-level limitations the app cannot work around.** Browsers cannot:
   - Read or set the device IP, MAC, or routing tables.
   - Configure DHCP / static IP on the phone. The Network page's `STATIC`
@@ -58,9 +68,14 @@ the local Knoxnet VMS receiver is the only consumer.
    the receiver session**. Anyone on the LAN with that URL and code can
    register a camera.
 2. Restart the receiver to rotate the pairing code.
-3. Run the receiver on a host that is reachable from the phone over LAN only
+3. Keep RTSP auth enabled in production. To rotate generated RTSP credentials,
+   stop the bridge, delete `RTSP_PASSWORD_FILE`, and start the bridge again; or
+   set a new `RTSP_PASSWORD` and restart the bridge.
+4. Run the receiver on a host that is reachable from the phone over LAN only
    (don't expose port 8787 over the public internet without TLS + auth in
    front of it).
-4. Keep `AUTO_ACCEPT_ALL` / legacy `AUTO_ACCEPT` off in production. Use
+5. Keep `AUTO_ACCEPT_ALL` / legacy `AUTO_ACCEPT` off in production. Use
    `AUTO_ACCEPT_KNOWN` only for devices you have explicitly trusted from the
    receiver dashboard.
+6. Use `RTSP_AUTH_REQUIRED=false` only for local development. When disabled,
+   anyone on the reachable network can view the RTSP stream.

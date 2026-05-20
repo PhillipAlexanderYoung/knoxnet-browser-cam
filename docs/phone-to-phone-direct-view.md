@@ -8,7 +8,8 @@ Direct View lets one phone share its browser camera directly to one approved vie
 2. Tap **Direct View: Use this phone as camera**.
 3. Tap **Share Camera** and allow camera/microphone permission.
 4. Phone A creates a temporary Cloudflare Durable Object signaling room and shows a QR/link.
-5. Phone B scans the QR or opens `/join/<roomToken>`.
+5. Phone B scans the QR with the in-app QR scanner, scans it with the native
+   Camera app, or opens/pastes `/join/<roomToken>`.
 6. Phone B sends a viewer request.
 7. Phone A sees `Viewer wants to connect: [device/browser info]` and taps **Allow** or **Deny**.
 8. Only after approval, the phones exchange WebRTC offer/answer/ICE through signaling.
@@ -39,5 +40,29 @@ Worker timing knobs:
 ## Browser Notes
 
 - iPhone Safari and Android Chrome require HTTPS for camera access.
+- In-app viewer QR scanning uses the browser `BarcodeDetector` API after the
+  user taps **Scan QR in app**. Browsers without that API should fall back to the
+  native Camera app or the paste/open invite link field.
+- The same in-app scanner also recognizes local receiver pairing URLs such as
+  `https://cam.knoxnetvms.com/?receiver=wss://...&pair=...&autostart=1`. Those
+  switch back to Local VMS Camera mode and fill receiver settings instead of
+  joining Direct View.
 - Viewer autoplay can require a tap before audio/video starts.
 - Desktop Chrome, Edge, and Safari can be useful for testing the viewer side.
+
+## Test Checklist
+
+- Start Direct View camera mode, confirm the QR/link still appears and native
+  Camera app scanning opens `/join/<roomToken>`.
+- From **View another phone** or **Local VMS Camera**, tap the in-app QR scanner,
+  allow camera permission, confirm the live preview appears, and verify a Direct
+  View QR joins the room.
+- Scan a receiver pairing QR and confirm the app returns to Local VMS Camera
+  mode with receiver URL and pairing code filled, leaving the user to tap
+  **Connect**.
+- Scan an unrelated QR and confirm the compact rejection message appears while
+  scanning continues.
+- Deny browser camera permission or test a browser without `BarcodeDetector` and
+  confirm the app suggests native Camera app scanning or pasting the invite link.
+- Stop scanning, leave viewer mode, and switch modes while scanning to confirm
+  the scanner camera indicator turns off.

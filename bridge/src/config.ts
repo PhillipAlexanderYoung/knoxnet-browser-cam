@@ -1,5 +1,6 @@
 import os from "node:os";
-import { existsSync } from "node:fs";
+import { existsSync, chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 
 export interface BridgeConfig {
@@ -19,6 +20,11 @@ export interface BridgeConfig {
   mediaMtxWebRtcUdpPort: number;
   mediaMtxAdditionalHosts: string[];
   rtspPathGraceMs: number;
+  rtspAuthRequired: boolean;
+  rtspUsername: string;
+  rtspPassword?: string;
+  rtspPasswordFile: string;
+  rtspPasswordGenerated: boolean;
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -55,6 +61,12 @@ export function loadConfig(): BridgeConfig {
     process.env.PUBLIC_HOST ??
     detectLanIp() ??
     "localhost";
+  const rtspAuthRequired = envBool("RTSP_AUTH_REQUIRED", true);
+  const rtspPasswordFile =
+    process.env.RTSP_PASSWORD_FILE ?? path.join(runtimeDir, "rtsp-password");
+  const rtspCredentials = rtspAuthRequired
+    ? loadRtspCredentials(runtimeDir, rtspPasswordFile)
+    : { password: process.env.RTSP_PASSWORD?.trim() || undefined, generated: false };
 
   return {
     bridgeHost: process.env.BRIDGE_HOST ?? "127.0.0.1",
@@ -78,7 +90,44 @@ export function loadConfig(): BridgeConfig {
       .map((host) => host.trim())
       .filter(Boolean),
     rtspPathGraceMs: envNumber("RTSP_PATH_GRACE_MS", 10 * 60_000),
+    rtspAuthRequired,
+    rtspUsername: process.env.RTSP_USERNAME?.trim() || "knoxnet",
+    rtspPassword: rtspCredentials.password,
+    rtspPasswordFile,
+    rtspPasswordGenerated: rtspCredentials.generated,
   };
+}
+
+function loadRtspCredentials(
+  runtimeDir: string,
+  passwordFile: string,
+): { password: string; generated: boolean } {
+  const envPassword = process.env.RTSP_PASSWORD?.trim();
+  if (envPassword) return { password: envPassword, generated: false };
+
+  try {
+    const existing = readFileSync(passwordFile, "utf8").trim();
+    if (existing) {
+      try {
+        chmodSync(passwordFile, 0o600);
+      } catch {
+        // Best effort only; config generation should still work on non-POSIX filesystems.
+      }
+      return { password: existing, generated: false };
+    }
+  } catch {
+    // Missing or unreadable files fall through to first-start generation.
+  }
+
+  mkdirSync(path.dirname(passwordFile) || runtimeDir, { recursive: true, mode: 0o700 });
+  const password = randomBytes(24).toString("base64url");
+  writeFileSync(passwordFile, `${password}\n`, { encoding: "utf8", mode: 0o600 });
+  try {
+    chmodSync(passwordFile, 0o600);
+  } catch {
+    // Best effort only; the file mode above is the primary protection.
+  }
+  return { password, generated: true };
 }
 
 function defaultMediaMtxBinary(): string {
@@ -93,4 +142,20 @@ function defaultMediaMtxBinary(): string {
 export function socketAddress(host: string, port: number): string {
   if (host === "0.0.0.0" || host === "::") return `:${port}`;
   return `${host}:${port}`;
+}
+
+export function rtspUrlForPath(
+  config: BridgeConfig,
+  cameraPath: string,
+  opts: { credentials?: "none" | "redacted" | "full" } = {},
+): string {
+  const base = `${config.publicHost}:${config.mediaMtxRtspPort}/${cameraPath}`;
+  const mode = opts.credentials ?? "none";
+  if (!config.rtspAuthRequired || mode === "none") return `rtsp://${base}`;
+
+  const username = encodeURIComponent(config.rtspUsername);
+  const password = mode === "full"
+    ? encodeURIComponent(config.rtspPassword ?? "")
+    : "****";
+  return `rtsp://${username}:${password}@${base}`;
 }

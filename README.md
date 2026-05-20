@@ -190,7 +190,8 @@ Use that address as `<lan-ip>` everywhere below.
    `npm run dev:all` when editing `web/`. Then open the receiver dashboard.
    The dashboard shows the phone app origin, the embedded receiver WSS URL, and
    the dashboard URL separately.
-2. **On iPhone:** scan the dashboard QR with the native Camera app. It opens
+2. **On iPhone:** open `https://cam.knoxnetvms.com` and scan the dashboard QR
+   with the in-app scanner, or scan it with the native Camera app. It opens
    `https://cam.knoxnetvms.com/?receiver=wss://<lan-ip>:8787/ws&pair=<code>&autostart=1`
    for normal use, or `https://<lan-ip>:5173/...` in dev mode.
 3. **Phone:** if the receiver uses a self-signed local TLS certificate, open
@@ -288,21 +289,41 @@ Important bridge environment variables:
 | `MEDIAMTX_WEBRTC_PORT` | `8889` | MediaMTX WHIP/WHEP HTTP port. |
 | `MEDIAMTX_API_PORT` | `9997` | MediaMTX local control API port. |
 | `RTSP_PATH_GRACE_MS` | `600000` | How long the bridge retains an offline stable RTSP path before cleanup. |
+| `RTSP_AUTH_REQUIRED` | `true` | Require MediaMTX read credentials for RTSP/NVR clients. Set `false` only for closed-network development. |
+| `RTSP_USERNAME` | `knoxnet` | Username for RTSP/NVR read access. |
+| `RTSP_PASSWORD` | generated | Password for RTSP/NVR read access. If omitted, the bridge generates one on first start. |
+| `RTSP_PASSWORD_FILE` | `<BRIDGE_RUNTIME_DIR>/rtsp-password` | File used to persist the generated password with restrictive permissions. |
 
 Current RTSP status: the bridge implements stable path allocation,
 MediaMTX config generation/process management, receiver-side WHIP relay, and
-dashboard Stable RTSP URL / NVR URL display. The receiver marks cameras
+dashboard Stable RTSP URL / NVR URL display. RTSP read authentication is enabled
+by default; the dashboard shows redacted URLs such as
+`rtsp://knoxnet:****@<bridge-host>:8554/<camera-slug>` and provides separate
+copy actions for credentialed NVR URLs and URLs without embedded credentials.
+If `RTSP_PASSWORD` is not set, the first bridge start generates a strong random
+password, writes it to `RTSP_PASSWORD_FILE`, and logs it once. Rotate credentials
+by setting a new `RTSP_PASSWORD` or stopping the bridge, deleting the generated
+password file, and starting the bridge again. The receiver marks cameras
 `negotiating` while the WHIP offer is being posted to MediaMTX and only marks
 the bridge `publishing` after MediaMTX returns an answer. A complete end-to-end
 RTSP stream requires a MediaMTX binary available on `PATH`, in
 `/home/operator1/Documents/Knoxnet-VMS/mediamtx/mediamtx`, or via
 `MEDIAMTX_BINARY`. WHIP trickle-ICE PATCH support is marked as follow-up in code.
+Never expose RTSP directly to the internet; use WireGuard or another private VPN
+for remote NVR access.
 
 ## Cloudflare-hosted phone app and remote mode
 
 `https://cam.knoxnetvms.com` is the default phone app URL for normal receiver
 pairing. This is useful because users do not need to run or trust a local Vite
 HTTPS app just to open the camera UI on an iPhone.
+
+The hosted app is the front door for two flows: **Local VMS Camera**, which pairs
+this phone with your local receiver/bridge for Knoxnet or RTSP, and **Direct
+View**, which is phone-to-phone browser viewing. Its in-app QR scanner recognizes
+both receiver pairing URLs (`?receiver=...&pair=...`) and Direct View joins
+(`/join/<roomToken>`). The app also links to the GitHub repository so users can
+download/run the local receiver that creates the pairing QR and RTSP bridge.
 
 What it does:
 

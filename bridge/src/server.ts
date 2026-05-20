@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "./config.js";
+import { loadConfig, rtspUrlForPath } from "./config.js";
 import { MediaMtxManager } from "./mediamtx.js";
 import { CameraRegistry, type CameraQualityInfo } from "./registry.js";
 
@@ -165,14 +165,45 @@ const server = createServer(async (req, res) => {
         service: "knoxnet-browser-cam-bridge",
         mediamtx: await mediaMtx.status(),
         rtspPathGraceMs: config.rtspPathGraceMs,
+        rtspAuth: {
+          required: config.rtspAuthRequired,
+          username: config.rtspAuthRequired ? config.rtspUsername : null,
+          passwordFile: config.rtspAuthRequired && !process.env.RTSP_PASSWORD
+            ? config.rtspPasswordFile
+            : null,
+          generated: config.rtspPasswordGenerated,
+        },
         urls: {
           rtspBase: `rtsp://${config.publicHost}:${config.mediaMtxRtspPort}`,
+          rtspBaseRedacted: config.rtspAuthRequired
+            ? `rtsp://${encodeURIComponent(config.rtspUsername)}:****@${config.publicHost}:${config.mediaMtxRtspPort}`
+            : `rtsp://${config.publicHost}:${config.mediaMtxRtspPort}`,
           whipBase: `http://${config.mediaMtxInternalHost}:${config.mediaMtxWebRtcPort}`,
           webRtcBase: `http://${config.publicHost}:${config.mediaMtxWebRtcPort}`,
           hlsBase: null,
         },
         cameras: registry.list(),
         ts: new Date().toISOString(),
+      });
+      return;
+    }
+
+    const cameraRtspUrlId = extractCameraId(pathname, "/rtsp-url");
+    if (req.method === "GET" && cameraRtspUrlId) {
+      const camera = registry.get(cameraRtspUrlId);
+      if (!camera) {
+        json(res, 404, { ok: false, error: "not-found" });
+        return;
+      }
+      const includeCredentials =
+        new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`)
+          .searchParams.get("credentials") === "1";
+      json(res, 200, {
+        ok: true,
+        url: rtspUrlForPath(config, camera.path, {
+          credentials: includeCredentials ? "full" : "none",
+        }),
+        authRequired: config.rtspAuthRequired,
       });
       return;
     }
@@ -268,6 +299,18 @@ const server = createServer(async (req, res) => {
 
 await mediaMtx.start();
 
+if (config.rtspAuthRequired) {
+  log(`RTSP auth enabled username=${config.rtspUsername}`);
+  if (config.rtspPasswordGenerated) {
+    log(`Generated RTSP password saved to ${config.rtspPasswordFile}`);
+    log(`RTSP password: ${config.rtspPassword}`);
+  } else if (!process.env.RTSP_PASSWORD) {
+    log(`RTSP password loaded from ${config.rtspPasswordFile}`);
+  }
+} else {
+  log("WARNING: RTSP auth disabled. Anyone on this network who can reach RTSP may view streams.");
+}
+
 const cleanupTimer = setInterval(() => {
   const removed = registry.cleanupExpired();
   for (const cameraId of removed) {
@@ -279,7 +322,7 @@ cleanupTimer.unref();
 server.listen(config.bridgePort, config.bridgeHost, () => {
   log(`HTTP API listening on http://${config.bridgeHost}:${config.bridgePort}`);
   log(`MediaMTX config: ${config.mediaMtxConfigPath}`);
-  log(`RTSP URLs use rtsp://${config.publicHost}:${config.mediaMtxRtspPort}/<camera-path>`);
+  log(`RTSP URLs use ${rtspUrlForPath(config, "<camera-path>", { credentials: "redacted" })}`);
 });
 
 async function shutdown(signal: string): Promise<void> {

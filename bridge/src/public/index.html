@@ -36,6 +36,10 @@
           <div class="metric__mono" id="metric-rtsp">...</div>
         </div>
         <div class="metric">
+          <div class="metric__label">RTSP Auth</div>
+          <div class="metric__mono" id="metric-auth">Checking...</div>
+        </div>
+        <div class="metric">
           <div class="metric__label">Preview</div>
           <div class="metric__mono" id="metric-preview">Checking...</div>
         </div>
@@ -46,7 +50,11 @@
           <div class="section-title">Camera Paths</div>
           <p class="toolbar__hint">
             Dense bridge registry for RTSP paths. Browser previews use MediaMTX WebRTC when available;
-            RTSP itself is for VLC, Knoxnet VMS, or another RTSP client.
+            RTSP itself is for VLC, Knoxnet VMS, or another RTSP client. Phone browsers do not need
+            RTSP credentials; they publish WebRTC to this local receiver/bridge.
+          </p>
+          <p class="toolbar__warning hidden" id="auth-warning">
+            RTSP auth is disabled. Anyone on this network who can reach this URL may view the stream.
           </p>
         </div>
         <div class="toolbar__actions">

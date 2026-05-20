@@ -104,7 +104,11 @@ function renderInfo(info) {
     if (!info.bridgeUrl) {
       bridge.textContent = "RTSP bridge disabled. Use npm run receiver:dev-phone for phone pairing only, or npm run dev:all for the RTSP bridge too.";
     } else if (info.bridgeHealth?.ok) {
-      bridge.textContent = `Bridge connected: ${info.bridgeUrl}. Use each Stable RTSP URL / NVR URL after accepting and trusting a camera.`;
+      const auth = info.bridgeHealth?.rtspAuth;
+      const authText = auth?.required
+        ? `RTSP auth enabled on the local bridge (username ${auth.username || "knoxnet"}; password managed on the bridge dashboard).`
+        : "WARNING: RTSP auth disabled; anyone on this network who can reach the URL may view the stream.";
+      bridge.textContent = `Bridge connected: ${info.bridgeUrl}. ${authText} The phone app does not need RTSP credentials.`;
     } else {
       bridge.textContent = `Bridge down: ${info.bridgeUrl}. Phones will keep reconnecting; stable RTSP URLs recover when the bridge returns.`;
     }
@@ -517,12 +521,19 @@ function renderCameras() {
       cam.status === "disconnected" && cam.disconnectReason
         ? ` • reason: ${escapeHtml(cam.disconnectReason)}`
         : "";
+    const bridgeAuth = state.info?.bridgeHealth?.rtspAuth;
+    const bridgeRtspUrl = bridgeAuth?.required
+      ? (cam.bridge?.rtspUrlRedacted || cam.bridge?.rtspUrl)
+      : cam.bridge?.rtspUrl;
+    const rtspAuthNote = bridgeAuth?.required
+      ? `RTSP auth is enabled. Username ${escapeHtml(bridgeAuth.username || "knoxnet")}; copy credentialed NVR URLs from the local bridge dashboard.`
+      : "WARNING: RTSP auth is disabled; anyone on this network who can reach this URL may view the stream.";
     const rtsp = cam.bridge?.rtspUrl
       ? `<div class="camera__rtsp">
           <span>${cam.bridge.ingestStatus === "publishing" ? "Stable RTSP URL / NVR URL live" : "Stable RTSP URL / NVR URL retained"}</span>
-          <code>${escapeHtml(cam.bridge.rtspUrl)}</code>
-          <button class="btn btn--ghost" data-action="copy-rtsp" data-id="${cam.sessionId}">Copy</button>
-          <small>NVRs should use this URL. The stream may pause during phone reconnects, but the URL should not change.</small>
+          <code>${escapeHtml(bridgeRtspUrl)}</code>
+          <button class="btn btn--ghost" data-action="copy-rtsp" data-id="${cam.sessionId}">Copy URL without credentials</button>
+          <small>${rtspAuthNote} The stream may pause during phone reconnects, but the URL should not change.</small>
         </div>`
       : "";
     const bridge = bridgePhase(cam);

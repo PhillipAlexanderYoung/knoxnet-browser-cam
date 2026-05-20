@@ -65,6 +65,8 @@ const RESOLUTION_OPTS: { value: ResolutionMode; label: string }[] = [
   { value: "1080p", label: "1920 x 1080 (FHD)" },
 ];
 
+const RECEIVER_GITHUB_URL = "https://github.com/PhillipAlexanderYoung/knoxnet-browser-cam";
+
 export function NetworkPage({
   settings,
   onChange,
@@ -138,6 +140,17 @@ export function NetworkPage({
           Works when this phone can reach the receiver: same Wi-Fi/LAN, or connected to the same WireGuard VPN.
           Cloudflare hosts the app shell only; camera video stays direct/private to the receiver/bridge.
         </span>
+      </div>
+
+      <div className="callout callout--info receiver-download">
+        <InfoIcon size={14} />
+        <span>
+          Need the local receiver? It runs on your VMS/local machine and creates the pairing QR plus RTSP bridge.
+          Cloudflare hosts only this web app shell.
+        </span>
+        <a href={RECEIVER_GITHUB_URL} target="_blank" rel="noreferrer">
+          Download from GitHub <ExternalLink size={13} />
+        </a>
       </div>
 
       <div className="card">

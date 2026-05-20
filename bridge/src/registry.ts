@@ -1,4 +1,4 @@
-import type { BridgeConfig } from "./config.js";
+import { rtspUrlForPath, type BridgeConfig } from "./config.js";
 
 export interface BridgeCamera {
   id: string;
@@ -9,6 +9,7 @@ export interface BridgeCamera {
   path: string;
   status: "allocated" | "publishing" | "recovering" | "offline" | "error";
   rtspUrl: string;
+  rtspUrlRedacted?: string;
   whipUrl: string;
   previewAvailable: boolean;
   previewUrls: {
@@ -94,7 +95,8 @@ export class CameraRegistry {
       name: params.name || `phone-cam-${params.cameraId.slice(0, 6)}`,
       path,
       status: "allocated",
-      rtspUrl: `rtsp://${this.config.publicHost}:${this.config.mediaMtxRtspPort}/${path}`,
+      rtspUrl: rtspUrlForPath(this.config, path),
+      rtspUrlRedacted: rtspUrlForPath(this.config, path, { credentials: "redacted" }),
       whipUrl: `http://${this.config.mediaMtxInternalHost}:${this.config.mediaMtxWebRtcPort}/${path}/whip`,
       previewAvailable: preview.available,
       previewUrls: {

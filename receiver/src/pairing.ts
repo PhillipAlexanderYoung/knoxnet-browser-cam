@@ -46,6 +46,7 @@ export interface CameraRecord {
     name: string;
     path: string;
     rtspUrl: string;
+    rtspUrlRedacted?: string;
     whipUrl?: string;
     ingestStatus?: "allocated" | "publishing" | "recovering" | "offline" | "error";
     lastError?: string;

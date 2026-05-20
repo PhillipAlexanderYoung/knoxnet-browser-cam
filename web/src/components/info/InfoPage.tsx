@@ -7,6 +7,8 @@ import {
 } from "../../wireguard";
 import "./InfoPage.css";
 
+const RECEIVER_GITHUB_URL = "https://github.com/PhillipAlexanderYoung/knoxnet-browser-cam";
+
 type PermissionResult = "granted" | "denied" | "prompt" | "unknown";
 
 interface PermissionsState {
@@ -70,6 +72,17 @@ export function InfoPage() {
               Turn a phone browser into a LAN WebRTC camera for the Knoxnet VMS.
             </span>
           </div>
+        </div>
+        <div className="row">
+          <div className="row__label">
+            Need the local receiver?
+            <span className="row__sublabel">
+              Receiver runs on your VMS/local machine and creates the pairing QR/RTSP bridge; Cloudflare hosts only this web app shell.
+            </span>
+          </div>
+          <a className="info-link" href={RECEIVER_GITHUB_URL} target="_blank" rel="noreferrer">
+            Download from GitHub <ExternalLink size={13} />
+          </a>
         </div>
       </div>
 

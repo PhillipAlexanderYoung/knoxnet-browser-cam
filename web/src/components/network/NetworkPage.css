@@ -92,6 +92,24 @@
   margin-top: -6px;
 }
 
+.receiver-download {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.receiver-download a {
+  grid-column: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
 .wireguard-card {
   display: grid;
   gap: 12px;

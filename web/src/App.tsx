@@ -9,6 +9,7 @@ import { TabBar, type TabKey } from "./components/TabBar";
 import { Toast } from "./components/common/Toast";
 import { DirectViewCamera } from "./direct-view/DirectViewCamera";
 import { DirectViewViewer } from "./direct-view/DirectViewViewer";
+import type { DirectViewQrResult } from "./direct-view/qr";
 import {
   DEFAULT_SETTINGS,
   getOrCreateDeviceId,
@@ -249,10 +250,36 @@ export default function App() {
     setTab("camera");
   }, [joinToken]);
 
+  const openDirectJoin = useCallback((roomToken: string) => {
+    window.history.pushState({}, "", `/join/${encodeURIComponent(roomToken)}`);
+    setJoinToken(roomToken);
+  }, []);
+
+  const handleQrResult = useCallback((result: DirectViewQrResult) => {
+    if (result.type === "direct-view") {
+      openDirectJoin(result.roomToken);
+      return;
+    }
+
+    const nextSettings = {
+      ...settings,
+      receiverUrl: result.receiverUrl,
+      pairingCode: result.pairingCode,
+    };
+    onChangeSettings(nextSettings);
+    if (joinToken) {
+      window.history.pushState({}, "", "/");
+      setJoinToken(null);
+    }
+    setDirectMode(null);
+    setTab("camera");
+    setToast(result.autostart ? "Receiver QR loaded. Tap Connect to start." : "Receiver QR loaded.");
+  }, [joinToken, onChangeSettings, openDirectJoin, settings]);
+
   if (joinToken) {
     return (
       <div className="app-shell">
-        <DirectViewViewer roomToken={joinToken} onBack={leaveDirectView} />
+        <DirectViewViewer roomToken={joinToken} onBack={leaveDirectView} onReceiverInvite={handleQrResult} />
         <Toast message={toast} onDone={() => setToast(null)} />
       </div>
     );
@@ -270,7 +297,7 @@ export default function App() {
   if (directMode === "viewer") {
     return (
       <div className="app-shell">
-        <DirectViewViewer onBack={leaveDirectView} />
+        <DirectViewViewer onBack={leaveDirectView} onRoomToken={openDirectJoin} onReceiverInvite={handleQrResult} />
         <Toast message={toast} onDone={() => setToast(null)} />
       </div>
     );
@@ -288,6 +315,7 @@ export default function App() {
           clientDeviceId={clientDeviceId}
           onDirectCamera={() => setDirectMode("camera")}
           onDirectViewer={() => setDirectMode("viewer")}
+          onQrResult={handleQrResult}
         />
       )}
       {tab === "network" && (

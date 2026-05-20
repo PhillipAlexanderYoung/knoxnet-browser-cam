@@ -70,12 +70,23 @@ BRIDGE_URL=http://localhost:8790 npm run receiver
 ```
 
 Then pair the phone as usual and accept the camera. The receiver dashboard shows
-the allocated RTSP URL. Add that URL to Knoxnet VMS as a normal RTSP camera,
-for example:
+the allocated RTSP URL. RTSP auth is enabled by default on the bridge; the phone
+browser does not need those credentials because it publishes WebRTC to the local
+receiver/bridge. Add the credentialed URL from the bridge dashboard to Knoxnet
+VMS as a normal RTSP camera, for example:
 
 ```text
-rtsp://<bridge-host>:8554/<camera-slug>
+rtsp://knoxnet:<password>@<bridge-host>:8554/<camera-slug>
 ```
+
+Set `RTSP_USERNAME` / `RTSP_PASSWORD` before starting the bridge if Knoxnet VMS
+should use a known credential. If `RTSP_PASSWORD` is omitted, the bridge
+generates one on first start, stores it in `RTSP_PASSWORD_FILE` (default
+`<BRIDGE_RUNTIME_DIR>/rtsp-password`), logs it once, and redacts it in dashboard
+display. Rotate generated credentials by stopping the bridge, deleting that
+password file, and starting the bridge again; or set a new `RTSP_PASSWORD` and
+restart. `RTSP_AUTH_REQUIRED=false` exists for development only and shows a
+warning because anyone on the reachable network could view the stream.
 
 ## Knoxnet VMS packaging plan
 
@@ -87,7 +98,9 @@ Knoxnet VMS can package this without changing the browser camera:
    enabled.
 3. Set receiver `BRIDGE_URL` to the bridge API URL.
 4. Read `camera.bridge.rtspUrl` from the receiver API/dashboard payload and add
-   it to the VMS camera model as an RTSP source.
+   it to the VMS camera model as an RTSP source, alongside the configured
+   bridge RTSP username/password or the credentialed URL copied from the bridge
+   dashboard.
 5. Later, move path lifecycle, auth policy, recording policy, and firewall
    prompts into Knoxnet VMS while leaving `web/` as a browser-only camera.
 
@@ -96,8 +109,10 @@ Security/locality notes:
 - The bridge REST API defaults to `127.0.0.1:8790` and should stay local unless
   a trusted host needs to allocate paths.
 - MediaMTX defaults to `0.0.0.0` for RTSP/WebRTC so phones and RTSP clients on
-  the LAN can reach it. Treat that LAN as trusted or restrict it with host
-  firewall rules.
+  the LAN can reach it. RTSP read auth is enabled by default, but you should
+  still restrict exposure with host firewall rules.
+- Never expose RTSP directly to the public internet. For remote NVR/client
+  access, join the client to the private WireGuard network first.
 - There is no cloud service and no third-party video relay in this design.
 
 ## Option 2 — `gstreamer` `webrtcbin` → `rtspserver`
