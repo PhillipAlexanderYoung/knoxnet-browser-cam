@@ -3,6 +3,7 @@ const NS = "knoxnet-browser-cam:";
 export interface CameraSettings {
   cameraName: string;
   receiverUrl: string;
+  vpnReceiverUrl?: string;
   pairingCode: string;
   discoverable: boolean;
   preferredFacingMode: "user" | "environment";
@@ -21,6 +22,7 @@ export interface CameraSettings {
 export const DEFAULT_SETTINGS: CameraSettings = {
   cameraName: "",
   receiverUrl: "",
+  vpnReceiverUrl: "wss://10.44.0.1:8787/ws",
   pairingCode: "",
   discoverable: true,
   preferredFacingMode: "environment",
@@ -85,6 +87,7 @@ export function saveSettings(s: CameraSettings): void {
   const safe: CameraSettings = {
     cameraName: s.cameraName,
     receiverUrl: s.receiverUrl,
+    vpnReceiverUrl: s.vpnReceiverUrl,
     pairingCode: s.pairingCode,
     discoverable: s.discoverable,
     preferredFacingMode: s.preferredFacingMode,

@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { Info as InfoIcon, Lock } from "lucide-react";
+import { ExternalLink, Info as InfoIcon, Lock, ShieldCheck } from "lucide-react";
+import {
+  DEFAULT_WIREGUARD_RECEIVER_URL,
+  WIREGUARD_APP_STORE_URL,
+  WIREGUARD_DEEP_LINK,
+  WIREGUARD_GUIDE_URL,
+} from "../../wireguard";
 import "./InfoPage.css";
 
 type PermissionResult = "granted" | "denied" | "prompt" | "unknown";
@@ -73,6 +79,47 @@ export function InfoPage() {
         <PermissionRow label="Camera" state={perms.camera} />
         <PermissionRow label="Microphone" state={perms.microphone} />
         <PermissionRow label="Wake Lock" state={perms.wakeLock} />
+      </div>
+
+      <div className="section-header">Remote / WireGuard</div>
+      <div className="card info-wireguard">
+        <div className="info-wireguard__header">
+          <ShieldCheck size={18} />
+          <div>
+            <div className="info-wireguard__title">Connect the VPN before remote camera use</div>
+            <p>
+              <code>cam.knoxnetvms.com</code> serves the static phone app only.
+              The camera stream still needs a private path back to the receiver,
+              so remote iPhones should join WireGuard first.
+            </p>
+          </div>
+        </div>
+        <ol className="info-wireguard__steps">
+          <li>Install WireGuard for iPhone.</li>
+          <li>Import the peer config or QR from the receiver machine.</li>
+          <li>Turn on the VPN tunnel.</li>
+          <li>Return here and use <code>{DEFAULT_WIREGUARD_RECEIVER_URL}</code>, or scan the receiver QR.</li>
+        </ol>
+        <div className="info-wireguard__actions">
+          <a className="btn btn--primary" href={WIREGUARD_APP_STORE_URL} target="_blank" rel="noreferrer">
+            Install WireGuard for iPhone
+            <ExternalLink size={14} />
+          </a>
+          <a className="btn btn--ghost" href={WIREGUARD_DEEP_LINK}>
+            Open WireGuard
+          </a>
+          <a className="btn btn--ghost" href={WIREGUARD_GUIDE_URL} target="_blank" rel="noreferrer">
+            View setup guide
+            <ExternalLink size={14} />
+          </a>
+        </div>
+        <div className="callout callout--warning">
+          <InfoIcon size={14} />
+          <span>
+            Only import configs you trust. WireGuard can grant VPN access to
+            private receiver, bridge, RTSP, and VMS services.
+          </span>
+        </div>
       </div>
 
       <div className="section-header">Reality constraints</div>

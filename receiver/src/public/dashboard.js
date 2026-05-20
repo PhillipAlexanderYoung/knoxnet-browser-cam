@@ -5,6 +5,9 @@ const STUN_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ];
+const WIREGUARD_GUIDE_URL =
+  "https://github.com/PhillipAlexanderYoung/knoxnet-browser-cam/blob/main/docs/wireguard-remote-camera.md";
+const DEFAULT_WIREGUARD_RECEIVER_URL = "wss://10.44.0.1:8787/ws";
 
 const el = (id) => document.getElementById(id);
 
@@ -59,6 +62,15 @@ function renderInfo(info) {
   if (receiverWsUrl) {
     receiverWsUrl.textContent = info.receiverWsUrl ?? "unknown";
   }
+  const wireguardReceiverUrl = recommendedWireGuardReceiverUrl(info);
+  for (const id of ["wireguard-receiver-url", "remote-wireguard-url"]) {
+    const node = el(id);
+    if (node) node.textContent = wireguardReceiverUrl;
+  }
+  for (const id of ["wireguard-help-link", "wireguard-doc-link"]) {
+    const node = el(id);
+    if (node) node.href = WIREGUARD_GUIDE_URL;
+  }
   const dashboardUrl = el("dashboard-url");
   if (dashboardUrl) {
     dashboardUrl.textContent = receiverDashboardUrl;
@@ -89,9 +101,15 @@ function renderInfo(info) {
     const receiverHost = safeHost(info.receiverWsUrl);
     const cloudMode = info.phoneAppMode === "cloud" || appHost === "cam.knoxnetvms.com";
     remoteMode.textContent = cloudMode
-      ? `Remote mode ready: QR opens ${appHost}; receiver target is ${receiverHost}. Use WireGuard when the phone is away from this LAN.`
+      ? `Remote mode ready: QR opens ${appHost}; receiver target is ${receiverHost}. Remote phones must connect WireGuard first.`
       : `Development mode: QR opens ${appHost}; receiver target is ${receiverHost}.`;
   }
+}
+
+function recommendedWireGuardReceiverUrl(info) {
+  const receiverWsUrl = info?.receiverWsUrl ?? "";
+  if (receiverWsUrl.includes("10.44.0.1")) return receiverWsUrl;
+  return DEFAULT_WIREGUARD_RECEIVER_URL;
 }
 
 el("copy-url").addEventListener("click", async () => {

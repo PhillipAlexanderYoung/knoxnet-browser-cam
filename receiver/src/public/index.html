@@ -48,6 +48,14 @@
               <img alt="Pairing QR" id="pairing-qr" />
               <div class="caps muted">QR decodes to</div>
               <a class="pairing__url pairing__url--qr" id="pairing-qr-url" href="#">…</a>
+              <div class="wireguard-help">
+                <div class="wireguard-help__title">Remote phone? Connect WireGuard first</div>
+                <p>
+                  Turn on the iPhone WireGuard tunnel, then scan this QR or use
+                  <code id="wireguard-receiver-url">wss://10.44.0.1:8787/ws</code>.
+                </p>
+                <a id="wireguard-help-link" href="https://github.com/PhillipAlexanderYoung/knoxnet-browser-cam/blob/main/docs/wireguard-remote-camera.md" target="_blank" rel="noreferrer">View setup guide</a>
+              </div>
             </div>
           </div>
         </div>
@@ -76,8 +84,9 @@
             </p>
           </div>
           <div class="remote-links">
-            <a href="/docs/wireguard-remote-camera.md" id="wireguard-doc-link">WireGuard setup guide</a>
+            <a href="https://github.com/PhillipAlexanderYoung/knoxnet-browser-cam/blob/main/docs/wireguard-remote-camera.md" id="wireguard-doc-link" target="_blank" rel="noreferrer">WireGuard setup guide</a>
             <span>Recommended remote camera mode: iPhone joins the private VPN, then scans this receiver QR.</span>
+            <span>Suggested receiver URL over VPN: <code id="remote-wireguard-url">wss://10.44.0.1:8787/ws</code></span>
           </div>
         </div>
       </section>
