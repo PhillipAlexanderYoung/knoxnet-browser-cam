@@ -35,22 +35,25 @@ export const DEFAULT_WIREGUARD_SETTINGS: WireGuardSettings = {
 };
 
 export const WIREGUARD_INSTALL_COMMANDS = [
-  "sudo apt update",
-  "sudo apt install -y wireguard ufw",
+  "# Ubuntu/Debian receiver host",
+  "sudo apt update && sudo apt install -y wireguard qrencode",
 ].join("\n");
 
 export async function getWireGuardStatus(): Promise<{
   wgInstalled: boolean;
+  wgQuickInstalled: boolean;
   version?: string;
 }> {
+  const wgQuickInstalled = await commandExists("wg-quick");
   try {
     const result = await runCommand("wg", ["--version"]);
     return {
       wgInstalled: true,
+      wgQuickInstalled,
       version: result.stdout.split("\n")[0]?.trim() || undefined,
     };
   } catch {
-    return { wgInstalled: false };
+    return { wgInstalled: false, wgQuickInstalled };
   }
 }
 
@@ -135,9 +138,8 @@ function buildSetupCommands(settings: WireGuardSettings, serverConfig: string): 
     "# Review these commands before running them on the receiver/VMS host.",
     `# They install WireGuard, write ${configPath}, open only the VPN`,
     `# and receiver service ports, then start wg-quick@${settings.interfaceName}.`,
-    "sudo apt update",
-    "sudo apt install -y wireguard ufw",
-    "sudo install -m 700 -d /etc/wireguard",
+    WIREGUARD_INSTALL_COMMANDS,
+    "sudo install -d -m 700 /etc/wireguard",
     `sudo tee ${configPath} >/dev/null <<'EOF'`,
     serverConfig.trimEnd(),
     "EOF",
@@ -146,8 +148,11 @@ function buildSetupCommands(settings: WireGuardSettings, serverConfig: string): 
     `sudo ufw allow in on ${settings.interfaceName} to ${settings.receiverVpnIp} port ${settings.receiverPort} proto tcp comment 'Knoxnet receiver dashboard/WSS'`,
     `sudo ufw allow in on ${settings.interfaceName} to ${settings.receiverVpnIp} port 8790 proto tcp comment 'Knoxnet bridge API'`,
     `sudo ufw allow in on ${settings.interfaceName} to ${settings.receiverVpnIp} port 8554 proto tcp comment 'MediaMTX RTSP over VPN'`,
+    "# Do not expose RTSP or receiver web ports directly to the public internet.",
     `sudo systemctl enable --now wg-quick@${settings.interfaceName}`,
     "sudo wg show",
+    `ip addr show ${settings.interfaceName}`,
+    `curl -k https://${settings.receiverVpnIp}:${settings.receiverPort}/api/info`,
   ].join("\n");
 }
 
@@ -162,6 +167,15 @@ function endpointWithPort(publicEndpoint: string, listenPort: number): string {
   if (!endpoint) return `<your-public-ip-or-ddns>:${listenPort}`;
   if (/:\d+$/.test(endpoint)) return endpoint;
   return `${endpoint}:${listenPort}`;
+}
+
+async function commandExists(command: string): Promise<boolean> {
+  try {
+    await runCommand("sh", ["-lc", `command -v ${command}`]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function subnetPrefix(vpnSubnet: string): number {

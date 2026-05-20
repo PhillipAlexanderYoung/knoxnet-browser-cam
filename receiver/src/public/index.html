@@ -111,7 +111,11 @@
                 a WireGuard phone QR, and the Knoxnet camera QR. Nothing privileged runs from this web UI.
               </p>
             </div>
-            <button class="btn btn--primary" id="wg-generate" disabled>Enable remote phone access with WireGuard</button>
+            <div class="wg-actions">
+              <button class="btn btn--primary" id="wg-generate" disabled>Enable remote phone access with WireGuard</button>
+              <button class="btn btn--ghost btn--small hidden" id="wg-regenerate">Regenerate setup</button>
+              <button class="btn btn--ghost btn--small hidden" id="wg-reset">Reset view</button>
+            </div>
           </div>
 
           <div class="wg-step">
@@ -151,17 +155,47 @@
             <div class="wg-status" id="wg-tool-status">Checking for WireGuard tools…</div>
           </div>
 
-          <div class="wg-step wg-generated hidden" id="wg-generated">
-            <div class="wg-step__label">1 · Run receiver commands</div>
-            <p>Copy these commands to the receiver/VMS host after reviewing them.</p>
+          <div class="wg-step wg-install hidden" id="wg-install">
+            <div class="wg-step__label">Step A · Install WireGuard on this receiver machine</div>
+            <p>
+              Run this on the local receiver/VMS host. Ubuntu/Debian commands are shown by default;
+              install WireGuard and <code>qrencode</code>, then click the WireGuard button again.
+            </p>
             <div class="code-panel">
-              <button class="btn btn--ghost btn--small" data-copy-target="wg-commands">Copy commands</button>
+              <button class="btn btn--ghost btn--small" data-copy-target="wg-install-commands">Copy install commands</button>
+              <pre id="wg-install-commands"></pre>
+            </div>
+          </div>
+
+          <div class="wg-step wg-generated hidden" id="wg-generated">
+            <div class="wg-step__label">Step B · Start the WireGuard tunnel on this receiver machine</div>
+            <p>
+              Write the generated server config to <code id="wg-config-path">/etc/wireguard/wg-knoxcam.conf</code>,
+              lock down permissions, then enable/start <code id="wg-service-name">wg-quick@wg-knoxcam</code>.
+            </p>
+            <div class="code-panel">
+              <button class="btn btn--ghost btn--small" data-copy-target="wg-server-config-commands">Copy config/start commands</button>
+              <pre id="wg-server-config-commands"></pre>
+            </div>
+            <p>Allow WireGuard UDP. Keep receiver, bridge, and RTSP access private to the VPN; do not expose RTSP to the internet.</p>
+            <div class="code-panel">
+              <button class="btn btn--ghost btn--small" data-copy-target="wg-firewall-commands">Copy firewall examples</button>
+              <pre id="wg-firewall-commands"></pre>
+            </div>
+            <p>Verify the tunnel and receiver API from the local machine.</p>
+            <div class="code-panel">
+              <button class="btn btn--ghost btn--small" data-copy-target="wg-verify-commands">Copy verification commands</button>
+              <pre id="wg-verify-commands"></pre>
+            </div>
+            <p>All receiver commands in one block, if you prefer a single copy/paste after reviewing them.</p>
+            <div class="code-panel">
+              <button class="btn btn--ghost btn--small" data-copy-target="wg-commands">Copy all receiver commands</button>
               <pre id="wg-commands"></pre>
             </div>
 
-            <div class="wg-step__label">2 · Scan this QR in the WireGuard app</div>
+            <div class="wg-step__label">Step C · Scan this QR in the iPhone WireGuard app</div>
             <p>
-              Install/open WireGuard on the phone, scan this QR, then turn the VPN on.
+              Install/open WireGuard on the phone and scan this QR.
             </p>
             <div class="wg-output-grid">
               <img alt="WireGuard peer QR" id="wg-peer-qr" />
@@ -171,7 +205,7 @@
               </div>
             </div>
 
-            <div class="wg-step__label">3 · After VPN is on, scan this Knoxnet camera QR</div>
+            <div class="wg-step__label">Step D · Turn on VPN, then Step E · Scan this Knoxnet camera QR</div>
             <ol class="wg-checklist">
               <li>Turn on WireGuard on the iPhone.</li>
               <li>Open <code id="wg-dashboard-url">https://10.44.0.1:8787/</code> in Safari and trust the receiver cert if prompted.</li>

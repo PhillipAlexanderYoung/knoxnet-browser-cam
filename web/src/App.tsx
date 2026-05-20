@@ -7,6 +7,8 @@ import {
 import { InfoPage } from "./components/info/InfoPage";
 import { TabBar, type TabKey } from "./components/TabBar";
 import { Toast } from "./components/common/Toast";
+import { DirectViewCamera } from "./direct-view/DirectViewCamera";
+import { DirectViewViewer } from "./direct-view/DirectViewViewer";
 import {
   DEFAULT_SETTINGS,
   getOrCreateDeviceId,
@@ -54,6 +56,11 @@ function deriveReceiverHttpFromWs(ws: string): string | null {
 
 export default function App() {
   const [tab, setTab] = useState<TabKey>("camera");
+  const [directMode, setDirectMode] = useState<"camera" | "viewer" | null>(null);
+  const [joinToken, setJoinToken] = useState<string | null>(() => {
+    const match = window.location.pathname.match(/^\/join\/([^/]+)$/);
+    return match ? decodeURIComponent(match[1]) : null;
+  });
   const [settings, setSettings] = useState<CameraSettings>(() =>
     urlSettingsOverride({ ...DEFAULT_SETTINGS, ...loadSettings() }),
   );
@@ -233,6 +240,42 @@ export default function App() {
     [receiverInfo],
   );
 
+  const leaveDirectView = useCallback(() => {
+    if (joinToken) {
+      window.history.pushState({}, "", "/");
+      setJoinToken(null);
+    }
+    setDirectMode(null);
+    setTab("camera");
+  }, [joinToken]);
+
+  if (joinToken) {
+    return (
+      <div className="app-shell">
+        <DirectViewViewer roomToken={joinToken} onBack={leaveDirectView} />
+        <Toast message={toast} onDone={() => setToast(null)} />
+      </div>
+    );
+  }
+
+  if (directMode === "camera") {
+    return (
+      <div className="app-shell">
+        <DirectViewCamera onBack={leaveDirectView} />
+        <Toast message={toast} onDone={() => setToast(null)} />
+      </div>
+    );
+  }
+
+  if (directMode === "viewer") {
+    return (
+      <div className="app-shell">
+        <DirectViewViewer onBack={leaveDirectView} />
+        <Toast message={toast} onDone={() => setToast(null)} />
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       {tab === "camera" && (
@@ -243,6 +286,8 @@ export default function App() {
           onChangeAudio={onChangeAudio}
           autoStart={autoStart}
           clientDeviceId={clientDeviceId}
+          onDirectCamera={() => setDirectMode("camera")}
+          onDirectViewer={() => setDirectMode("viewer")}
         />
       )}
       {tab === "network" && (

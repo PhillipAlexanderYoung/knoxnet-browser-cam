@@ -11,7 +11,8 @@
   "workspaces": [
     "web",
     "receiver",
-    "bridge"
+    "bridge",
+    "cloudflare/signaling-relay"
   ],
   "scripts": {
     "dev": "concurrently -k -n receiver,web -c blue,magenta \"PHONE_APP_ENV=dev npm run receiver\" \"npm:web\"",
@@ -28,11 +29,13 @@
     "web": "npm --workspace web run dev",
     "web:https": "npm --workspace web run dev:https",
     "build:web": "npm --workspace web run build",
+    "build:signaling": "npm --workspace @knoxnet-browser-cam/signaling-relay run build",
+    "deploy:signaling": "npm --workspace @knoxnet-browser-cam/signaling-relay run deploy",
     "deploy:pages": "npx wrangler@latest pages deploy web/dist --project-name knoxnet-browser-cam --branch main",
-    "build": "npm --workspace web run build && npm --workspace receiver run build && npm --workspace bridge run build",
+    "build": "npm --workspace web run build && npm --workspace receiver run build && npm --workspace bridge run build && npm --workspace @knoxnet-browser-cam/signaling-relay run build",
     "test:urls": "npm --workspace receiver run test:urls",
     "test:wss": "npm --workspace receiver run test:wss",
-    "typecheck": "npm --workspace web run typecheck && npm --workspace receiver run typecheck && npm --workspace bridge run typecheck",
+    "typecheck": "npm --workspace web run typecheck && npm --workspace receiver run typecheck && npm --workspace bridge run typecheck && npm --workspace @knoxnet-browser-cam/signaling-relay run typecheck",
     "start": "npm --workspace receiver run start"
   },
   "devDependencies": {

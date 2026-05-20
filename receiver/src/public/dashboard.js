@@ -234,42 +234,50 @@ function updateWireGuardControls() {
   const status = state.wireguard.status;
   const ack = Boolean(el("wg-ack")?.checked);
   const generate = el("wg-generate");
+  const regenerate = el("wg-regenerate");
+  const reset = el("wg-reset");
   const statusNode = el("wg-tool-status");
   if (generate) generate.disabled = !ack;
+  if (generate && state.wireguard.generated) {
+    generate.textContent = "Show generated WireGuard setup";
+  }
+  if (regenerate) regenerate.classList.toggle("hidden", !state.wireguard.generated);
+  if (reset) reset.classList.toggle("hidden", !state.wireguard.generated);
   if (!statusNode) return;
   if (!status) {
     statusNode.textContent = "Checking for WireGuard tools…";
     statusNode.className = "wg-status";
   } else if (status.wgInstalled) {
-    statusNode.textContent = `WireGuard tools found${status.version ? `: ${status.version}` : ""}. Check the acknowledgement, then generate.`;
+    const wgQuick = status.wgQuickInstalled ? "wg-quick found" : "wg-quick not found";
+    statusNode.textContent = `WireGuard tools found${status.version ? `: ${status.version}` : ""}; ${wgQuick}. Check the acknowledgement, then generate.`;
     statusNode.className = "wg-status";
   } else {
-    statusNode.textContent = `WireGuard tools not found. Install WireGuard first, then click Generate again: ${status.installCommands}`;
+    statusNode.textContent = `WireGuard tools not found. Install WireGuard on this receiver machine first, then click Generate again.`;
     statusNode.className = "wg-status wg-status--warn";
   }
 }
 
-async function generateWireGuardSetup() {
+async function generateWireGuardSetup(forceRegenerate = false) {
   const button = el("wg-generate");
   const statusNode = el("wg-tool-status");
   if (button) {
     button.disabled = true;
-    button.textContent = "Generating…";
+    button.textContent = forceRegenerate ? "Regenerating…" : "Generating…";
   }
   try {
+    const requestBody = readWireGuardSettings();
+    if (forceRegenerate) requestBody.forceRegenerate = true;
     const res = await fetch("/api/wireguard/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(readWireGuardSettings()),
+      body: JSON.stringify(requestBody),
     });
-    const data = await res.json().catch(() => ({}));
+    const data = await readJsonResponse(res);
     if (!res.ok) {
-      if (data.wgMissing && statusNode) {
-        statusNode.textContent = `${data.message} ${data.installCommands}`;
-        statusNode.className = "wg-status wg-status--warn";
-      } else {
-        throw new Error(data.message || data.error || `wireguard generate ${res.status}`);
-      }
+      throw new Error(data.message || data.error || data.body || `wireguard generate ${res.status}`);
+    }
+    if (data.status === "needs-install" || data.wgMissing) {
+      renderWireGuardNeedsInstall(data);
       return;
     }
     renderWireGuardSetup(data);
@@ -287,11 +295,57 @@ async function generateWireGuardSetup() {
   }
 }
 
+async function readJsonResponse(res) {
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return res.json().catch(() => ({}));
+  }
+  const body = await res.text().catch(() => "");
+  return body ? { body, message: body } : {};
+}
+
+function renderWireGuardNeedsInstall(data) {
+  state.wireguard.generated = null;
+  setWireGuardPhase("Install needed");
+  const install = el("wg-install");
+  if (install) install.classList.remove("hidden");
+  el("wg-install-commands").textContent = data.installCommands || ubuntuWireGuardInstallCommands();
+  const generated = el("wg-generated");
+  if (generated) generated.classList.add("hidden");
+  const statusNode = el("wg-tool-status");
+  if (statusNode) {
+    statusNode.className = "wg-status wg-status--warn";
+    statusNode.innerHTML = [
+      `<strong>${escapeHtml(data.message || "WireGuard tools are not installed.")}</strong>`,
+      "Step A is ready below. Run the install commands on the receiver/VMS host, then click the WireGuard button again to generate config and QR codes.",
+    ].join("<br />");
+  }
+  updateWireGuardControls();
+}
+
 function renderWireGuardSetup(data) {
   state.wireguard.generated = data;
-  setWireGuardPhase("Config generated");
+  setWireGuardPhase(data.status === "already-generated" ? "Config ready" : "Config generated");
+  const statusNode = el("wg-tool-status");
+  if (statusNode) {
+    const endpointNote =
+      data.endpointSource === "request-host"
+        ? ` Using ${data.setup?.settings?.publicEndpoint || "the dashboard host"} as the WireGuard endpoint for LAN testing.`
+        : "";
+    statusNode.textContent = `${data.message || "WireGuard setup ready."}${endpointNote}`;
+    statusNode.className = "wg-status";
+  }
+  const install = el("wg-install");
+  if (install) install.classList.remove("hidden");
   const generated = el("wg-generated");
   if (generated) generated.classList.remove("hidden");
+  const commandBlocks = wireGuardCommandBlocks(data);
+  el("wg-install-commands").textContent = commandBlocks.install;
+  el("wg-config-path").textContent = commandBlocks.configPath;
+  el("wg-service-name").textContent = commandBlocks.serviceName;
+  el("wg-server-config-commands").textContent = commandBlocks.serverConfig;
+  el("wg-firewall-commands").textContent = commandBlocks.firewall;
+  el("wg-verify-commands").textContent = commandBlocks.verify;
   el("wg-commands").textContent = data.setup.commands;
   el("wg-phone-config").textContent = data.setup.phoneConfig;
   el("wg-peer-qr").src = data.wireGuardPeerQr;
@@ -306,6 +360,61 @@ function renderWireGuardSetup(data) {
     pairingUrl.href = data.vpnPairingUrl;
     pairingUrl.textContent = data.vpnPairingUrl;
   }
+  updateWireGuardControls();
+}
+
+function resetWireGuardView() {
+  state.wireguard.generated = null;
+  setWireGuardPhase("Not configured");
+  const install = el("wg-install");
+  if (install) install.classList.add("hidden");
+  const generated = el("wg-generated");
+  if (generated) generated.classList.add("hidden");
+  const statusNode = el("wg-tool-status");
+  if (statusNode) {
+    statusNode.textContent = "WireGuard setup view reset. Click the button to show the current generated setup or create one.";
+    statusNode.className = "wg-status";
+  }
+  updateWireGuardControls();
+}
+
+function wireGuardCommandBlocks(data) {
+  const settings = data.setup.settings;
+  const configPath = `/etc/wireguard/${settings.interfaceName}.conf`;
+  const serviceName = `wg-quick@${settings.interfaceName}`;
+  return {
+    configPath,
+    serviceName,
+    install: ubuntuWireGuardInstallCommands(),
+    serverConfig: [
+      "sudo install -d -m 700 /etc/wireguard",
+      `sudo tee ${configPath} >/dev/null <<'EOF'`,
+      data.setup.serverConfig.trimEnd(),
+      "EOF",
+      `sudo chmod 600 ${configPath}`,
+      `sudo systemctl enable --now ${serviceName}`,
+    ].join("\n"),
+    firewall: [
+      `sudo ufw allow ${settings.listenPort}/udp comment 'WireGuard'`,
+      `sudo ufw allow in on ${settings.interfaceName} to ${settings.receiverVpnIp} port ${settings.receiverPort} proto tcp comment 'Knoxnet receiver dashboard/WSS'`,
+      "# Optional VPN-only service examples:",
+      `sudo ufw allow in on ${settings.interfaceName} to ${settings.receiverVpnIp} port 8790 proto tcp comment 'Knoxnet bridge API'`,
+      `sudo ufw allow in on ${settings.interfaceName} to ${settings.receiverVpnIp} port 8554 proto tcp comment 'MediaMTX RTSP over VPN'`,
+      "# Do not expose RTSP, bridge, or receiver web ports directly to the public internet.",
+    ].join("\n"),
+    verify: [
+      "sudo wg show",
+      `ip addr show ${settings.interfaceName}`,
+      `curl -k https://${settings.receiverVpnIp}:${settings.receiverPort}/api/info`,
+    ].join("\n"),
+  };
+}
+
+function ubuntuWireGuardInstallCommands() {
+  return [
+    "# Ubuntu/Debian receiver host",
+    "sudo apt update && sudo apt install -y wireguard qrencode",
+  ].join("\n");
 }
 
 async function copyElementText(targetId, button) {
@@ -330,7 +439,9 @@ el("copy-url").addEventListener("click", async () => {
 });
 
 el("wg-ack")?.addEventListener("change", updateWireGuardControls);
-el("wg-generate")?.addEventListener("click", generateWireGuardSetup);
+el("wg-generate")?.addEventListener("click", () => generateWireGuardSetup(false));
+el("wg-regenerate")?.addEventListener("click", () => generateWireGuardSetup(true));
+el("wg-reset")?.addEventListener("click", resetWireGuardView);
 
 function statusForCamera(cam) {
   return cam.status;

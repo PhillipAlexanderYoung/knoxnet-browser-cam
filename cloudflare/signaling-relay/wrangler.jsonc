@@ -1,0 +1,45 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "knoxnet-direct-signaling",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-20",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ROOMS",
+        "class_name": "RoomDurableObject"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["RoomDurableObject"]
+    }
+  ],
+  "vars": {
+    "ENVIRONMENT": "production",
+    "ALLOWED_ORIGINS": "https://cam.knoxnetvms.com",
+    "ROOM_TTL_SECONDS": "300",
+    "MAX_MESSAGE_BYTES": "16384",
+    "MAX_FAILED_JOINS": "8",
+    "APP_ORIGIN": "https://cam.knoxnetvms.com"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "env": {
+    "dev": {
+      "name": "knoxnet-direct-signaling-dev",
+      "vars": {
+        "ENVIRONMENT": "development",
+        "ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173,https://localhost:5173,https://cam.knoxnetvms.com",
+        "ROOM_TTL_SECONDS": "300",
+        "MAX_MESSAGE_BYTES": "16384",
+        "MAX_FAILED_JOINS": "20",
+        "APP_ORIGIN": "http://localhost:5173"
+      }
+    }
+  }
+}

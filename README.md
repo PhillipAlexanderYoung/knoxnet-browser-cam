@@ -23,6 +23,10 @@ Publishing guides:
 
 - [Cloudflare Pages hosting](docs/cloudflare-pages.md) for
   `https://cam.knoxnetvms.com`.
+- [Phone-to-phone Direct View](docs/phone-to-phone-direct-view.md) using
+  Cloudflare Durable Objects for signaling only.
+- [Cloudflare signaling security](docs/cloudflare-signaling-security.md) for
+  the Direct View Worker route and validation model.
 - [WireGuard remote camera mode](docs/wireguard-remote-camera.md) for phones
   away from the receiver LAN.
 - [GitHub publishing and releases](docs/github-release.md).

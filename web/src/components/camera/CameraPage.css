@@ -89,6 +89,23 @@
   gap: 6px;
 }
 
+.direct-mode-callout {
+  border-color: rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.direct-mode-actions {
+  grid-column: 1 / -1;
+  justify-content: stretch;
+}
+
+.direct-mode-actions .camera-callout__button--secondary {
+  flex: 1;
+  border-color: rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--accent);
+}
+
 .camera-callout--compact p {
   font-size: 11px;
   line-height: 1.3;

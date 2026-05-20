@@ -78,6 +78,9 @@ const KNOWN_DEVICES_PATH =
 const state = createPairingState(process.env.PAIRING_CODE);
 const eventLog = createEventLog();
 const knownDevices = createKnownDeviceStore(KNOWN_DEVICES_PATH);
+let cachedWireGuardSetup:
+  | { settingsKey: string; response: Record<string, unknown> }
+  | undefined;
 const urlConfig: ReceiverUrlConfig = {
   publicHost: PUBLIC_HOST,
   receiverPort: PORT,
@@ -91,6 +94,22 @@ const urlConfig: ReceiverUrlConfig = {
 function log(...args: unknown[]): void {
   // eslint-disable-next-line no-console
   console.log(`[receiver]`, new Date().toISOString(), ...args);
+}
+
+function requestHost(req: Request): string {
+  return req.hostname || PUBLIC_HOST;
+}
+
+function wireGuardSettingsKey(settings: typeof DEFAULT_WIREGUARD_SETTINGS): string {
+  return JSON.stringify({
+    vpnSubnet: settings.vpnSubnet,
+    receiverVpnIp: settings.receiverVpnIp,
+    phoneVpnIp: settings.phoneVpnIp,
+    listenPort: settings.listenPort,
+    interfaceName: settings.interfaceName,
+    publicEndpoint: settings.publicEndpoint,
+    receiverPort: settings.receiverPort,
+  });
 }
 
 interface NetworkAddress {
@@ -419,10 +438,16 @@ app.get("/api/wireguard/status", async (_req: Request, res: Response) => {
 
 app.post("/api/wireguard/generate", async (req: Request, res: Response) => {
   const wg = await getWireGuardStatus();
+  const requestedEndpoint =
+    typeof req.body?.publicEndpoint === "string" ? req.body.publicEndpoint.trim() : "";
   const settings = normalizeWireGuardSettings({
     ...req.body,
+    publicEndpoint: requestedEndpoint || requestHost(req),
     receiverPort: req.body?.receiverPort ?? PORT,
   });
+  const endpointSource = requestedEndpoint ? "provided" : "request-host";
+  const settingsKey = wireGuardSettingsKey(settings);
+  const forceRegenerate = req.body?.forceRegenerate === true;
   const vpnUrlConfig: ReceiverUrlConfig = {
     ...urlConfig,
     publicHost: settings.receiverVpnIp,
@@ -438,17 +463,33 @@ app.post("/api/wireguard/generate", async (req: Request, res: Response) => {
   const vpnPairingUrl = buildPhonePairingUrl(vpnUrlConfig, state.code);
 
   if (!wg.wgInstalled) {
-    res.status(409).json({
-      ok: false,
+    log("wireguard setup needs install: local wg command not found");
+    res.json({
+      ok: true,
+      status: "needs-install",
       error: "wg-missing",
       wgMissing: true,
+      wgInstalled: false,
+      wgQuickInstalled: wg.wgQuickInstalled,
       settings,
+      endpointSource,
       installCommands: WIREGUARD_INSTALL_COMMANDS,
       vpnReceiverWsUrl,
       vpnDashboardUrl,
       vpnPairingUrl,
       message:
         "WireGuard key generation requires the local wg command. Install WireGuard first, then click Generate again.",
+    });
+    return;
+  }
+
+  if (!forceRegenerate && cachedWireGuardSetup?.settingsKey === settingsKey) {
+    log("wireguard setup already generated; returning cached config");
+    res.json({
+      ...cachedWireGuardSetup.response,
+      status: "already-generated",
+      message:
+        "WireGuard setup already generated. Showing the existing config; use Regenerate setup to create new keys.",
     });
     return;
   }
@@ -468,10 +509,13 @@ app.post("/api/wireguard/generate", async (req: Request, res: Response) => {
         color: { dark: "#000000ff", light: "#ffffffff" },
       }),
     ]);
-    res.json({
+    const response = {
       ok: true,
+      status: "generated",
       wgInstalled: true,
+      wgQuickInstalled: wg.wgQuickInstalled,
       wgVersion: wg.version,
+      endpointSource,
       setup: configOnlySetup,
       wireGuardPeerQr,
       vpnPairingQr,
@@ -479,7 +523,9 @@ app.post("/api/wireguard/generate", async (req: Request, res: Response) => {
       vpnReceiverWsUrl,
       vpnDashboardUrl,
       notPersisted: true,
-    });
+    };
+    cachedWireGuardSetup = { settingsKey, response };
+    res.json(response);
   } catch (err) {
     log("wireguard generate error", err);
     res.status(500).json({

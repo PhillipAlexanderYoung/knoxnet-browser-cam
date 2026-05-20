@@ -28,6 +28,8 @@ interface CameraPageProps {
   onChangeAudio: (next: boolean) => void;
   autoStart: boolean;
   clientDeviceId: string;
+  onDirectCamera: () => void;
+  onDirectViewer: () => void;
 }
 
 function formatTrackBadge(settings: MediaTrackSettings | null): string | null {
@@ -120,6 +122,8 @@ export function CameraPage({
   onChangeAudio,
   autoStart,
   clientDeviceId,
+  onDirectCamera,
+  onDirectViewer,
 }: CameraPageProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [permissionError, setPermissionError] = useState<string | null>(null);
@@ -438,6 +442,35 @@ export function CameraPage({
             Works when this phone can reach the receiver: same Wi-Fi/LAN, or connected to the same WireGuard VPN.
             Cloudflare hosts the app shell only; camera video stays direct/private to the receiver/bridge.
           </p>
+        </div>
+      </section>
+
+      <section className="camera-callout camera-callout--compact camera-callout--hint direct-mode-callout">
+        <div className="camera-callout__title">
+          <ShieldCheck size={16} />
+          Phone-to-Phone Direct View
+        </div>
+        <div className="camera-callout__body">
+          <p>
+            Browser-only P2P mode for one approved viewer. Cloudflare relays signaling only;
+            no cloud video relay or TURN server is used.
+          </p>
+        </div>
+        <div className="camera-callout__actions direct-mode-actions">
+          <button
+            type="button"
+            className="camera-callout__button camera-callout__button--secondary"
+            onClick={onDirectCamera}
+          >
+            Use this phone as camera
+          </button>
+          <button
+            type="button"
+            className="camera-callout__button camera-callout__button--secondary"
+            onClick={onDirectViewer}
+          >
+            View another phone
+          </button>
         </div>
       </section>
 
