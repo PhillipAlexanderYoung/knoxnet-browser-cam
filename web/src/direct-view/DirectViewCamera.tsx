@@ -4,7 +4,9 @@ import { Header } from "../components/Header";
 import {
   createDirectRoom,
   describeThisDevice,
+  directReconnectTokenKey,
   DirectSignalingClient,
+  getOrCreateDirectClientId,
   type DirectRoom,
   type PeerInfo,
 } from "./signalingClient";
@@ -24,6 +26,8 @@ type Status =
   | "viewer-request"
   | "connecting"
   | "connected"
+  | "reconnecting-camera"
+  | "reconnecting-viewer"
   | "failed"
   | "ended";
 
@@ -36,6 +40,7 @@ export function DirectViewCamera({ onBack }: DirectViewCameraProps) {
   const clientRef = useRef<DirectSignalingClient | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const iceRestartedRef = useRef(false);
   const [status, setStatus] = useState<Status>("idle");
   const [room, setRoom] = useState<DirectRoom | null>(null);
   const [qr, setQr] = useState<string | null>(null);
@@ -88,6 +93,7 @@ export function DirectViewCamera({ onBack }: DirectViewCameraProps) {
       const nextRoom = await createDirectRoom();
       setRoom(nextRoom);
       setQr(await qrDataUrl(nextRoom.joinUrl));
+      const tokenKey = directReconnectTokenKey("camera", nextRoom.roomToken);
       const client = new DirectSignalingClient(
         nextRoom.wsUrl,
         async (message) => {
@@ -97,12 +103,23 @@ export function DirectViewCamera({ onBack }: DirectViewCameraProps) {
               device: describeThisDevice(),
               audio: audioEnabled,
             });
-            setStatus("waiting");
+            setStatus((current) =>
+              message.state === "viewer_reconnecting"
+                ? "reconnecting-viewer"
+                : message.state === "camera_reconnecting" || message.state === "connected" || message.state === "negotiating"
+                  ? "connecting"
+                  : current === "connected"
+                    ? current
+                    : "waiting",
+            );
+          } else if (message.type === "session") {
+            // handled by the client so it can persist reconnect identity
           } else if (message.type === "viewer-request") {
             setViewer(message.device);
             setStatus("viewer-request");
           } else if (message.type === "approved") {
             setStatus("connecting");
+            iceRestartedRef.current = false;
             await createOffer(client);
           } else if (message.type === "answer") {
             await pcRef.current?.setRemoteDescription(message.sdp);
@@ -110,17 +127,32 @@ export function DirectViewCamera({ onBack }: DirectViewCameraProps) {
             if (message.candidate?.candidate) {
               await pcRef.current?.addIceCandidate(message.candidate);
             }
-          } else if (message.type === "peer-left" || message.type === "ended") {
+          } else if (message.type === "peer-reconnecting") {
+            if (message.role === "viewer") setStatus("reconnecting-viewer");
+          } else if (message.type === "peer-reconnected") {
+            setStatus("connecting");
+          } else if (message.type === "peer-left") {
+            setViewer(null);
+            setStatus("waiting");
+          } else if (message.type === "ended") {
+            client.close(false);
             setStatus("ended");
           } else if (message.type === "error" || message.type === "denied") {
             setError("message" in message ? message.message : message.reason);
+            client.close(false);
+            setStatus("failed");
           }
         },
         () => setStatus((current) => (current === "ended" ? current : "failed")),
         (message) => setError(message),
       );
       clientRef.current = client;
-      client.connect("camera");
+      client.connect("camera", {
+        clientId: getOrCreateDirectClientId(),
+        reconnectToken: localStorage.getItem(tokenKey),
+        onReconnectToken: (token) => localStorage.setItem(tokenKey, token),
+        onReconnecting: () => setStatus((current) => (current === "ended" ? current : "reconnecting-camera")),
+      });
     } catch (err) {
       setError((err as Error)?.message ?? "Could not start Direct View camera.");
       setStatus("failed");
@@ -130,17 +162,34 @@ export function DirectViewCamera({ onBack }: DirectViewCameraProps) {
   const createOffer = useCallback(async (client: DirectSignalingClient) => {
     const stream = streamRef.current;
     if (!stream) throw new Error("Camera stream is not available.");
+    pcRef.current?.close();
     const pc = createDirectPeerConnection(
       (candidate) => client.send({ type: "ice", candidate }),
-      () => {
+      async () => {
+        if (!iceRestartedRef.current && pc.signalingState !== "closed") {
+          iceRestartedRef.current = true;
+          setStatus("connecting");
+          try {
+            pc.restartIce?.();
+            const offer = await pc.createOffer({ iceRestart: true });
+            await pc.setLocalDescription(offer);
+            client.send({ type: "offer", sdp: pc.localDescription ?? offer });
+            return;
+          } catch {
+            // fall through to the user-visible failure state below
+          }
+        }
         setError(DIRECT_P2P_FAILURE_MESSAGE);
         setStatus("failed");
       },
     );
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "connected") {
+        iceRestartedRef.current = false;
         setStatus("connected");
         client.send({ type: "connected" });
+      } else if (pc.connectionState === "disconnected") {
+        setStatus("reconnecting-viewer");
       } else if (pc.connectionState === "failed") {
         setError(DIRECT_P2P_FAILURE_MESSAGE);
         setStatus("failed");
@@ -189,6 +238,10 @@ export function DirectViewCamera({ onBack }: DirectViewCameraProps) {
         return "Connecting peer-to-peer";
       case "connected":
         return "Connected";
+      case "reconnecting-camera":
+        return "Reconnecting signaling";
+      case "reconnecting-viewer":
+        return "Viewer disconnected, reconnecting";
       case "failed":
         return "Connection failed";
       case "ended":
@@ -269,7 +322,14 @@ export function DirectViewCamera({ onBack }: DirectViewCameraProps) {
           <div className="direct-share__qr">
             {qr ? <img src={qr} alt="Direct View join QR" /> : <QrCode />}
           </div>
-          <div className="direct-countdown">Room expires in: {formatSeconds(expiresIn)}</div>
+          {(status === "waiting" || status === "viewer-request") && (
+            <div className="direct-countdown">QR expires in: {formatSeconds(expiresIn)}</div>
+          )}
+          {status !== "waiting" && status !== "viewer-request" && (
+            <div className="direct-countdown direct-countdown--active">
+              Room stays active while peers remain connected
+            </div>
+          )}
           <input readOnly value={room.joinUrl} onFocus={(e) => e.currentTarget.select()} />
           <div className="direct-actions">
             <button type="button" className="btn" onClick={() => void copyLink()}>

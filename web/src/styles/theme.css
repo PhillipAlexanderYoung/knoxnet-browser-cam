@@ -111,7 +111,8 @@ textarea:focus {
   max-width: 430px;
   margin: 0 auto;
   min-height: 100dvh;
-  padding: env(safe-area-inset-top, 0px) 16px 0;
+  padding: env(safe-area-inset-top, 0px) 16px
+    calc(var(--tabbar-h) + 24px + env(safe-area-inset-bottom, 0px));
   position: relative;
 }
 

@@ -155,6 +155,12 @@
   text-transform: uppercase;
 }
 
+.direct-countdown--active {
+  color: var(--text-secondary);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .direct-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;

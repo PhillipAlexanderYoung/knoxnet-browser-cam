@@ -3,7 +3,9 @@ import { ShieldCheck, Video, Volume2, VolumeX } from "lucide-react";
 import { Header } from "../components/Header";
 import {
   describeThisDevice,
+  directReconnectTokenKey,
   DirectSignalingClient,
+  getOrCreateDirectClientId,
   wsUrlForToken,
 } from "./signalingClient";
 import {
@@ -19,6 +21,8 @@ type ViewerStatus =
   | "waiting-approval"
   | "connecting"
   | "connected"
+  | "reconnecting-camera"
+  | "reconnecting-viewer"
   | "failed"
   | "ended";
 
@@ -37,6 +41,7 @@ export function DirectViewViewer({ roomToken, onBack }: DirectViewViewerProps) {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const reconnectingRef = useRef(false);
 
   const cleanup = useCallback((sendBye = true) => {
     clientRef.current?.close(sendBye);
@@ -69,18 +74,31 @@ export function DirectViewViewer({ roomToken, onBack }: DirectViewViewerProps) {
     setError(null);
     setStatus("joining");
     setToken(cleanToken);
+    const tokenKey = directReconnectTokenKey("viewer", cleanToken);
     const client = new DirectSignalingClient(
       wsUrlForToken(cleanToken),
       async (message) => {
         if (message.type === "room-ready") {
           client.send({ type: "viewer-hello", device: describeThisDevice() });
+          if (message.state === "camera_reconnecting" || message.state === "connected" || message.state === "negotiating") {
+            setStatus("reconnecting-camera");
+          }
+        } else if (message.type === "session") {
+          // handled by the client so it can persist reconnect identity
         } else if (message.type === "waiting-approval") {
           setStatus("waiting-approval");
         } else if (message.type === "approved") {
           setStatus("connecting");
+          reconnectingRef.current = false;
+          pcRef.current?.close();
           const pc = createDirectPeerConnection(
             (candidate) => client.send({ type: "ice", candidate }),
             () => {
+              if (!reconnectingRef.current) {
+                reconnectingRef.current = true;
+                setStatus("reconnecting-camera");
+                return;
+              }
               setError(DIRECT_P2P_FAILURE_MESSAGE);
               setStatus("failed");
             },
@@ -91,11 +109,19 @@ export function DirectViewViewer({ roomToken, onBack }: DirectViewViewerProps) {
           };
           pc.onconnectionstatechange = () => {
             if (pc.connectionState === "connected") {
+              reconnectingRef.current = false;
               setStatus("connected");
               client.send({ type: "connected" });
+            } else if (pc.connectionState === "disconnected") {
+              setStatus("reconnecting-camera");
             } else if (pc.connectionState === "failed") {
-              setError(DIRECT_P2P_FAILURE_MESSAGE);
-              setStatus("failed");
+              if (!reconnectingRef.current) {
+                reconnectingRef.current = true;
+                setStatus("reconnecting-camera");
+              } else {
+                setError(DIRECT_P2P_FAILURE_MESSAGE);
+                setStatus("failed");
+              }
             }
           };
           pcRef.current = pc;
@@ -111,11 +137,18 @@ export function DirectViewViewer({ roomToken, onBack }: DirectViewViewerProps) {
             await pcRef.current?.addIceCandidate(message.candidate);
           }
         } else if (message.type === "denied") {
+          client.close(false);
           setError(message.reason);
           setStatus("failed");
+        } else if (message.type === "peer-reconnecting") {
+          if (message.role === "camera") setStatus("reconnecting-camera");
+        } else if (message.type === "peer-reconnected") {
+          setStatus("connecting");
         } else if (message.type === "peer-left" || message.type === "ended") {
+          client.close(false);
           setStatus("ended");
         } else if (message.type === "error") {
+          client.close(false);
           setError(message.message);
           setStatus("failed");
         }
@@ -123,11 +156,15 @@ export function DirectViewViewer({ roomToken, onBack }: DirectViewViewerProps) {
       () => setStatus((current) => (current === "ended" ? current : "failed")),
       (message) => {
         setError(message);
-        setStatus("failed");
       },
     );
     clientRef.current = client;
-    client.connect("viewer");
+    client.connect("viewer", {
+      clientId: getOrCreateDirectClientId(),
+      reconnectToken: localStorage.getItem(tokenKey),
+      onReconnectToken: (nextToken) => localStorage.setItem(tokenKey, nextToken),
+      onReconnecting: () => setStatus((current) => (current === "ended" ? current : "reconnecting-viewer")),
+    });
   }, [attachAndPlay, cleanup, token]);
 
   useEffect(() => {
@@ -156,6 +193,8 @@ export function DirectViewViewer({ roomToken, onBack }: DirectViewViewerProps) {
     "waiting-approval": "Waiting for camera approval",
     connecting: "Connecting peer-to-peer",
     connected: "Connected",
+    "reconnecting-camera": "Camera disconnected, reconnecting",
+    "reconnecting-viewer": "Reconnecting signaling",
     failed: "Connection failed",
     ended: "Session ended",
   }[status];

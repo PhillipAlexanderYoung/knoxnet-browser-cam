@@ -14,9 +14,29 @@ const DEV_ORIGINS = [
   "http://127.0.0.1:5173",
   "https://localhost:5173",
 ];
+const CLIENT_ID_RE = /^[A-Za-z0-9_-]{16,64}$/;
+const RECONNECT_TOKEN_RE = /^[A-Za-z0-9_-]{24,96}$/;
 
 export function getRoomTtlMs(env: Env): number {
-  const seconds = clampNumber(Number(env.ROOM_TTL_SECONDS ?? 300), 120, 300);
+  return getRoomJoinTtlMs(env);
+}
+
+export function getRoomJoinTtlMs(env: Env): number {
+  const seconds = clampNumber(Number(env.ROOM_JOIN_TTL_SECONDS ?? env.ROOM_TTL_SECONDS ?? 300), 60, 1800);
+  return seconds * 1000;
+}
+
+export function getActiveRoomIdleTtlMs(env: Env): number {
+  const seconds = clampNumber(Number(env.ACTIVE_ROOM_IDLE_TTL_SECONDS ?? 120), 30, 1800);
+  return seconds * 1000;
+}
+
+export function getHeartbeatIntervalSeconds(env: Env): number {
+  return clampNumber(Number(env.HEARTBEAT_INTERVAL_SECONDS ?? 20), 5, 120);
+}
+
+export function getPeerGraceMs(env: Env): number {
+  const seconds = clampNumber(Number(env.PEER_GRACE_SECONDS ?? 45), 10, 300);
   return seconds * 1000;
 }
 
@@ -42,6 +62,24 @@ export function createRoomToken(): string {
 
 export function isValidRoomToken(token: string): boolean {
   return TOKEN_RE.test(token);
+}
+
+export function createReconnectToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+export function validClientId(value: string | null): string | null {
+  if (!value) return null;
+  return CLIENT_ID_RE.test(value) ? value : null;
+}
+
+export function validReconnectToken(value: string | null): string | null {
+  if (!value) return null;
+  return RECONNECT_TOKEN_RE.test(value) ? value : null;
 }
 
 export function allowedOrigins(env: Env): Set<string> {

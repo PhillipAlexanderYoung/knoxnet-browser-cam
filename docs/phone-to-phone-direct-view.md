@@ -18,8 +18,23 @@ Direct View lets one phone share its browser camera directly to one approved vie
 
 - Cloudflare relays signaling JSON only. It does not receive, relay, store, or process camera media.
 - No account, login, app install, TURN server, or cloud video relay is used.
-- Rooms are single-viewer and expire after 2-5 minutes depending on Worker config.
+- The QR/link waiting phase expires after `ROOM_JOIN_TTL_SECONDS` (default 5 minutes). This is only the unjoined/unapproved setup window, not an active call limit.
+- Once a viewer is approved, the room stays active while the approved camera/viewer peers heartbeat over signaling. There is no 5-minute active-session cutoff.
+- Rooms are single-viewer by default. After approval, the room is locked to that viewer's browser session token; another phone gets a locked/already-connected message and cannot steal the viewer slot.
+- If the approved camera or viewer drops unexpectedly, the room stays recoverable for `ACTIVE_ROOM_IDLE_TTL_SECONDS` (default 120 seconds). Returning with the same stored reconnect token rejoins without creating a new room and triggers WebRTC renegotiation.
+- Manual **End Session** / **Disconnect** intentionally ends the room instead of reconnecting forever.
 - Direct peer-to-peer WebRTC can fail on some NAT/cellular networks. If it fails, use same Wi-Fi, WireGuard receiver mode, or local receiver mode.
+
+## Room Lifecycle
+
+The camera UI should say **QR expires in** before a viewer is approved. After approval, the countdown is removed because active sessions are kept alive by peer heartbeats and reconnect grace, not by the original QR expiry.
+
+Worker timing knobs:
+
+- `ROOM_JOIN_TTL_SECONDS` defaults to `300` for the QR/link waiting phase.
+- `ACTIVE_ROOM_IDLE_TTL_SECONDS` defaults to `120` for approved-peer reconnect grace after disconnect or lost heartbeat.
+- `HEARTBEAT_INTERVAL_SECONDS` defaults to `20` for client signaling pings.
+- `PEER_GRACE_SECONDS` defaults to `45` for missed-heartbeat detection before marking a peer as reconnecting.
 
 ## Browser Notes
 

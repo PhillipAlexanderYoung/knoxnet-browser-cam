@@ -8,7 +8,7 @@ export const DIRECT_ICE_SERVERS: RTCIceServer[] = [
 
 export function createDirectPeerConnection(
   onIce: (candidate: RTCIceCandidateInit | null) => void,
-  onFailure: () => void,
+  onFailure: () => void | Promise<void>,
 ): RTCPeerConnection {
   const pc = new RTCPeerConnection({
     iceServers: DIRECT_ICE_SERVERS,
@@ -18,10 +18,10 @@ export function createDirectPeerConnection(
     onIce(event.candidate ? event.candidate.toJSON() : null);
   };
   pc.onconnectionstatechange = () => {
-    if (pc.connectionState === "failed") onFailure();
+    if (pc.connectionState === "failed") void onFailure();
   };
   pc.oniceconnectionstatechange = () => {
-    if (pc.iceConnectionState === "failed") onFailure();
+    if (pc.iceConnectionState === "failed") void onFailure();
   };
   return pc;
 }

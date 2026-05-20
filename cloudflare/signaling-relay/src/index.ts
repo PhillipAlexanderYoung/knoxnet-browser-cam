@@ -3,7 +3,7 @@ import { checkRateLimit, requestIp } from "./rateLimit";
 import {
   createRoomToken,
   enforceProductionHttps,
-  getRoomTtlMs,
+  getRoomJoinTtlMs,
   isProduction,
   isValidRoomToken,
   jsonResponse,
@@ -48,7 +48,7 @@ async function createRoom(request: Request, env: Env): Promise<Response> {
   }
 
   const roomToken = createRoomToken();
-  const expiresAtMs = Date.now() + getRoomTtlMs(env);
+  const expiresAtMs = Date.now() + getRoomJoinTtlMs(env);
   const id = env.ROOMS.idFromName(roomToken);
   const stub = env.ROOMS.get(id);
   const createResponse = await stub.fetch("https://room.local/create", {

@@ -130,81 +130,14 @@ export function CameraPage({
   const [cameraPermissionBlocked, setCameraPermissionBlocked] = useState(false);
   const [retryingCamera, setRetryingCamera] = useState(false);
   const [previewActive, setPreviewActive] = useState(false);
-  const previewedFor = useRef<string>("");
-  const autoStartAttempted = useRef(false);
   const cameraAccessError = api.cameraAccessError;
-  const previewKey = useMemo(
-    () =>
-      `${settings.preferredFacingMode}|${settings.preferredDeviceId ?? ""}|${settings.resolution}|${settings.frameRate}|${settings.audioEnabled}`,
-    [
-      settings.preferredFacingMode,
-      settings.preferredDeviceId,
-      settings.resolution,
-      settings.frameRate,
-      settings.audioEnabled,
-    ],
-  );
 
   useEffect(() => {
     if (videoRef.current && api.stream) {
       videoRef.current.srcObject = api.stream;
     }
+    setPreviewActive(Boolean(api.stream));
   }, [api.stream]);
-
-  // Acquire a local preview as soon as the page mounts, so the user can see
-  // their camera even before pressing record.
-  useEffect(() => {
-    if (previewedFor.current === previewKey) return;
-    if (api.state === "streaming" || api.state === "connecting") return;
-    if (cameraPermissionBlocked) return;
-    if (cameraAccessError) {
-      setPreviewActive(false);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        setPermissionError(null);
-        setCameraPermissionBlocked(false);
-        await api.acquirePreview({
-          facingMode: settings.preferredFacingMode,
-          deviceId: settings.preferredDeviceId,
-          resolution: settings.resolution,
-          frameRate: settings.frameRate,
-          audioEnabled: settings.audioEnabled,
-        });
-        if (!cancelled) {
-          previewedFor.current = previewKey;
-          setPreviewActive(true);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          const blocked = isCameraPermissionDeniedError(err);
-          setCameraPermissionBlocked(blocked);
-          setPermissionError(
-            blocked
-              ? CAMERA_PERMISSION_REQUIRED_MESSAGE
-              : (err as Error)?.message ?? "Could not access camera",
-          );
-          setPreviewActive(false);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // We intentionally re-run when these settings change.
-  }, [
-    api,
-    cameraAccessError,
-    cameraPermissionBlocked,
-    previewKey,
-    settings.preferredFacingMode,
-    settings.preferredDeviceId,
-    settings.resolution,
-    settings.frameRate,
-    settings.audioEnabled,
-  ]);
 
   const startStreaming = useCallback(async () => {
     if (!settings.receiverUrl || !settings.pairingCode) {
@@ -249,7 +182,6 @@ export function CameraPage({
     setPermissionError(null);
     setCameraPermissionBlocked(false);
     setPreviewActive(false);
-    previewedFor.current = "";
     try {
       if (autoStart && settings.receiverUrl && settings.pairingCode) {
         await startStreaming();
@@ -262,7 +194,6 @@ export function CameraPage({
         frameRate: settings.frameRate,
         audioEnabled: settings.audioEnabled,
       });
-      previewedFor.current = previewKey;
       setPreviewActive(true);
     } catch (err) {
       const blocked = isCameraPermissionDeniedError(err);
@@ -276,7 +207,7 @@ export function CameraPage({
     } finally {
       setRetryingCamera(false);
     }
-  }, [api, autoStart, previewKey, retryingCamera, settings, startStreaming]);
+  }, [api, autoStart, retryingCamera, settings, startStreaming]);
 
   const handleRecordToggle = useCallback(async () => {
     if (api.shouldStream) {
@@ -285,20 +216,6 @@ export function CameraPage({
     }
     await startStreaming();
   }, [api, startStreaming]);
-
-  useEffect(() => {
-    if (!autoStart || autoStartAttempted.current) return;
-    if (!settings.receiverUrl || !settings.pairingCode) return;
-    if (api.state !== "idle") return;
-    autoStartAttempted.current = true;
-    void startStreaming();
-  }, [
-    api.state,
-    autoStart,
-    settings.receiverUrl,
-    settings.pairingCode,
-    startStreaming,
-  ]);
 
   const isStreaming = api.state === "streaming";
   const isBusy =
@@ -432,48 +349,6 @@ export function CameraPage({
         </section>
       )}
 
-      <section className="camera-callout camera-callout--compact camera-callout--hint">
-        <div className="camera-callout__title">
-          <ShieldCheck size={16} />
-          Private receiver connection
-        </div>
-        <div className="camera-callout__body">
-          <p>
-            Works when this phone can reach the receiver: same Wi-Fi/LAN, or connected to the same WireGuard VPN.
-            Cloudflare hosts the app shell only; camera video stays direct/private to the receiver/bridge.
-          </p>
-        </div>
-      </section>
-
-      <section className="camera-callout camera-callout--compact camera-callout--hint direct-mode-callout">
-        <div className="camera-callout__title">
-          <ShieldCheck size={16} />
-          Phone-to-Phone Direct View
-        </div>
-        <div className="camera-callout__body">
-          <p>
-            Browser-only P2P mode for one approved viewer. Cloudflare relays signaling only;
-            no cloud video relay or TURN server is used.
-          </p>
-        </div>
-        <div className="camera-callout__actions direct-mode-actions">
-          <button
-            type="button"
-            className="camera-callout__button camera-callout__button--secondary"
-            onClick={onDirectCamera}
-          >
-            Use this phone as camera
-          </button>
-          <button
-            type="button"
-            className="camera-callout__button camera-callout__button--secondary"
-            onClick={onDirectViewer}
-          >
-            View another phone
-          </button>
-        </div>
-      </section>
-
       {cameraPermissionBlocked && !cameraAccessError && (
         <section
           className="camera-callout camera-callout--compact camera-callout--error"
@@ -601,7 +476,7 @@ export function CameraPage({
         {!previewActive && !permissionError && !cameraAccessError && (
           <div className="videoframe__placeholder">
             <Video size={32} strokeWidth={1.5} />
-            <span>Requesting camera…</span>
+            <span>Tap Connect to start camera</span>
           </div>
         )}
         {(permissionError || cameraAccessError) && (
@@ -632,6 +507,30 @@ export function CameraPage({
           {bitrateLabel ? ` • ${bitrateLabel}` : ""}
         </span>
       </div>
+
+      <section className="mode-picker" aria-label="Camera mode">
+        <div className="mode-picker__summary">
+          <div className="mode-picker__title">
+            <ShieldCheck size={14} />
+            Mode
+          </div>
+          <p>
+            Receiver mode keeps video direct/private on LAN or WireGuard.
+            {autoStart ? " QR receiver detected; tap Connect to start." : ""}
+          </p>
+        </div>
+        <div className="mode-picker__actions" role="group" aria-label="Mode options">
+          <button type="button" className="mode-picker__button mode-picker__button--active">
+            Receiver
+          </button>
+          <button type="button" className="mode-picker__button" onClick={onDirectCamera}>
+            Share
+          </button>
+          <button type="button" className="mode-picker__button" onClick={onDirectViewer}>
+            View
+          </button>
+        </div>
+      </section>
 
       {showGenericError && (
         <div className="errorbar">
@@ -690,7 +589,7 @@ export function CameraPage({
                 ? "Negotiating…"
               : isBusy
                 ? "Connecting…"
-                : "Tap to Record"}
+                : "Connect"}
           </span>
         </button>
 
